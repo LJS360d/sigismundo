@@ -20,6 +20,7 @@ Server volumes and runtime:
 2. Activities: enable them. URL Mappings: root `/` → the activity's public host (no scheme), e.g. `games.example.com`.
 3. Installation: guild install with scope `applications.commands` only (no `bot` scope, no permissions), or user install. Enabling Activities creates the default `Launch` entry point command, so the app shows in every VC's Activities shelf.
 
-## Local
+## Development
 
-See README "Run locally": host packages, `make local` / `make dev`, `pnpm dev`. To use the real Discord Activity against a local run, tunnel the Vite dev server (e.g. `cloudflared tunnel --url http://localhost:5173`) and point the URL mapping at it.
+Docker only: `docker compose up --build`, or `SIGISMUNDO_MODE=local docker compose up --build` for dev auth at `http://localhost:8080/?user=1&name=me`. For the real Discord Activity, tunnel port 8080 (e.g. `cloudflared tunnel --url http://localhost:8080`) and point the URL mapping at it.
+
