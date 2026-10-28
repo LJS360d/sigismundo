@@ -14,9 +14,10 @@ Two parts, two images: `server/` (API, game pipeline) and `activity/` (the Activ
 
 ## Run with Docker
 
-1. Create a Discord application, enable Activities, set the root URL mapping to your public HTTPS host. Details: [.knowledge/defined/deploy.md](.knowledge/defined/deploy.md).
+1. Create a Discord application. From OAuth2, note the client id and secret and add any redirect (e.g. `https://127.0.0.1`, unused but required). Enable Activities and map the root `/` to your public HTTPS host (no scheme). Install the app so it shows up in voice channels' Activities shelf.
 2. `cp server/.env.example server/.env` and fill in `CLIENT_ID`, `CLIENT_SECRET`, `OWNER_IDS`.
-3. Put your games in `./games` with a `catalog.yaml` (see [server/catalog.example.yaml](server/catalog.example.yaml), format in [.knowledge/defined/catalog.md](.knowledge/defined/catalog.md)).
+3. Put your games in `./games` with a `catalog.yaml`, see [server/catalog.example.yaml](server/catalog.example.yaml).
 4. `docker compose up -d --build`, and put a reverse proxy with TLS in front of port 8080 (the activity container).
+5. Optional but recommended: give it the GPU. Uncomment `devices`/`group_add` in the compose file and set `RENDER_GID` to `stat -c %g /dev/dri/renderD128`. Games then render on the GPU and the stream is encoded there too (VA-API on Intel/AMD, NVENC on NVIDIA); without one, everything runs on the CPU, which can take most of a small box. Knobs: `GPU_DEVICE`, `GPU_RENDER`, `VIDEO_ENCODER` in [server/.env.example](server/.env.example).
 
 Try it without Discord (no Discord app needed, anyone reaching it can log in as anyone): `SIGISMUNDO_MODE=local docker compose up --build`, then open `http://localhost:8080/?user=1&name=me`.

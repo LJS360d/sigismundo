@@ -1,4 +1,4 @@
-// Package httpapi is the API behind the Activity (web/, which proxies /api
+// Package httpapi is the API behind the Activity (activity/, which proxies /api
 // here): the OAuth2 token exchange and the WebSocket carrying state, input
 // and the stream.
 package httpapi

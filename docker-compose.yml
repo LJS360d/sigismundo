@@ -1,5 +1,5 @@
 # Dev/self-host example: builds both images from source.
-# Games and catalog.yaml go in ./games (see .knowledge/defined/catalog.md).
+# Games and catalog.yaml go in ./games (see server/catalog.example.yaml).
 # Only the activity is published; it proxies /api to the server. Discord must
 # reach it over public HTTPS: put a reverse proxy in front and set that URL as
 # the Activity's root URL mapping.

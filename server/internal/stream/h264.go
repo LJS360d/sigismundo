@@ -18,8 +18,8 @@ type AccessUnit struct {
 }
 
 // ReadAccessUnits splits an Annex B stream into access units, cut at each
-// access unit delimiter (ffmpeg's h264_metadata=aud=insert puts one before
-// every frame). It returns when r fails.
+// access unit delimiter (the encoder puts one before every frame: -aud 1, or
+// h264_metadata=aud=insert for libx264). It returns when r fails.
 func ReadAccessUnits(r io.Reader, emit func(AccessUnit)) error {
 	br := bufio.NewReaderSize(r, 1<<20)
 	var au bytes.Buffer

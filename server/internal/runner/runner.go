@@ -1,5 +1,6 @@
 // Package runner owns the processes of one session: Xvfb, PulseAudio, the
-// game under Wine and the two ffmpeg encoders feeding the stream hub.
+// game under Wine and the two ffmpeg encoders feeding the stream hub. The
+// GPU setup they share is resolved once per process in gpu.go.
 package runner
 
 import (
@@ -24,7 +25,7 @@ import (
 )
 
 // dxvkDir holds DXVK's x64 DLLs (the image). wined3d's GL path renders
-// D3D11 games black on llvmpipe; DXVK on lavapipe works.
+// D3D11 games black on llvmpipe; DXVK works, on the GPU or lavapipe (gpu.go).
 const dxvkDir = "/opt/dxvk"
 
 const (
@@ -393,6 +394,11 @@ func logLines(name string, rd io.Reader) {
 	sc := bufio.NewScanner(rd)
 	for sc.Scan() {
 		logger.Debugf("[%s] %s", name, sc.Text())
+	}
+	if err := sc.Err(); err != nil {
+		logger.Warnf("[%s] reading output: %v", name, err)
+		// keep draining so the process never blocks on a full pipe
+		io.Copy(io.Discard, rd)
 	}
 }
 
