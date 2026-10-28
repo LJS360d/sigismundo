@@ -11,7 +11,7 @@ import (
 
 func setup(t *testing.T) (*Manager, chan *runner.Run) {
 	t.Helper()
-	cat := &catalog.Catalog{Entries: []catalog.Entry{{ID: "jpp7", Name: "Pack 7", Games: []catalog.Game{{ID: "q3", Name: "Quiplash 3"}}}}}
+	cat := &catalog.Catalog{Entries: []catalog.Entry{{ID: "jpp7", Name: "Pack 7"}}}
 	m := NewManager(cat)
 	runs := make(chan *runner.Run, 4)
 	m.SetStarter(func(runner.Spec, func(string)) (*runner.Run, error) {
@@ -52,11 +52,11 @@ var (
 
 func TestLifecycleAndPermissions(t *testing.T) {
 	m, _ := setup(t)
-	pick, _ := m.Catalog.Resolve("jpp7/q3")
-	if _, err := m.Start(pick, alice, "g", "vc"); err != nil {
+	pick, _ := m.Catalog.Get("jpp7")
+	if _, err := m.Start(*pick, alice, "g", "vc"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Start(pick, bob, "g", "vc"); err != ErrBusy {
+	if _, err := m.Start(*pick, bob, "g", "vc"); err != ErrBusy {
 		t.Fatalf("second start: %v", err)
 	}
 	waitRunning(t, m)
@@ -75,8 +75,8 @@ func TestLifecycleAndPermissions(t *testing.T) {
 
 func TestGameExitEndsSession(t *testing.T) {
 	m, runs := setup(t)
-	pick, _ := m.Catalog.Resolve("jpp7")
-	m.Start(pick, alice, "g", "vc")
+	pick, _ := m.Catalog.Get("jpp7")
+	m.Start(*pick, alice, "g", "vc")
 	r := <-runs
 	waitRunning(t, m)
 	r.Stop()
@@ -85,8 +85,8 @@ func TestGameExitEndsSession(t *testing.T) {
 
 func TestControllerAway(t *testing.T) {
 	m, _ := setup(t)
-	pick, _ := m.Catalog.Resolve("jpp7")
-	m.Start(pick, alice, "g", "vc")
+	pick, _ := m.Catalog.Get("jpp7")
+	m.Start(*pick, alice, "g", "vc")
 	waitRunning(t, m)
 	m.Attach(&Viewer{User: bob})
 	time.Sleep(time.Millisecond)
@@ -106,8 +106,8 @@ func TestControllerAway(t *testing.T) {
 
 func TestIdleTimeout(t *testing.T) {
 	m, _ := setup(t)
-	pick, _ := m.Catalog.Resolve("jpp7")
-	m.Start(pick, alice, "g", "vc")
+	pick, _ := m.Catalog.Get("jpp7")
+	m.Start(*pick, alice, "g", "vc")
 	waitRunning(t, m)
 	m.tick(time.Now().Add(time.Minute))
 	if m.View(nil).Session == nil {

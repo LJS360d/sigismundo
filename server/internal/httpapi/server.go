@@ -51,6 +51,14 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/catalog", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, append([]catalog.Entry{}, s.sessions.Catalog.Entries...))
 	})
+	mux.HandleFunc("GET /api/catalog/{id}/image", func(w http.ResponseWriter, r *http.Request) {
+		e, ok := s.sessions.Catalog.Get(r.PathValue("id"))
+		if !ok || e.Image == "" {
+			http.NotFound(w, r)
+			return
+		}
+		http.ServeFile(w, r, e.Image)
+	})
 	mux.HandleFunc("GET /api/ws", s.ws)
 	return mux
 }

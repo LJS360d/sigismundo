@@ -11,19 +11,19 @@ Two images: `server/` (one binary: API + game pipeline; no bot user, no gateway 
 - `server/internal/runner` – the processes of one session.
 - `server/internal/stream` – H.264 access-unit splitter, Ogg Opus demuxer, fan-out `Hub`.
 - `server/internal/input` – XTEST mouse/keyboard injection (pure Go, `jezek/xgb`).
-- `server/internal/httpapi` – `/api/config` (client id), `/api/catalog`, `/api/token`, `/api/ws`.
+- `server/internal/httpapi` – `/api/config` (client id), `/api/catalog`, `/api/catalog/{id}/image`, `/api/token`, `/api/ws`.
 - `activity/` – the Activity frontend. nginx sends `frame-ancestors` for Discord's domains instead of `X-Frame-Options`, and gives `/api/ws` 1h timeouts with buffering off.
 
 No voice connection: nothing joins the VC. Audio and video both travel in the Activity stream.
 
 ## Discord surface
 
-- Only the Activity: launched from a VC's Activities shelf via the default `Launch` entry point command (Discord-handled, created by the portal). With no session it shows the picker; the first to pick hosts, and their VC becomes the session's channel (from the SDK).
+- Only the Activity: launched from a VC's Activities shelf via the default `Launch` entry point command (Discord-handled, created by the portal). With no session it shows the catalog; the first to pick hosts, and their VC becomes the session's channel (from the SDK).
 
 ## Session lifecycle
 
 - `Start` fails with `ErrBusy` while any session exists. The pipeline comes up in the background; `Status` strings reach viewers.
-- Activity UI: picker with no session, otherwise only the fullscreen stream (status overlay while starting). Keyboard goes to the game window-wide for the controller; first click/key unlocks audio. Esc is never forwarded: it toggles a Stop/Back menu.
+- Activity UI (Preact + signals: `src/store.ts` holds state and the WebSocket, `src/components/` the views): catalog of app cards (image, name, description, Launch) with no session, otherwise only the fullscreen stream (status overlay while starting). Keyboard goes to the game window-wide for the controller; first click/key unlocks audio. Esc is never forwarded: it toggles a Stop/Back menu.
 - Ends on: Esc menu Stop (host, controller or owner); game exit (runner); pipeline failure; no viewers for `idle_timeout` (counted from the later of session start and last viewer leaving).
 - Control: host starts with it, no manual handoff. The controller being absent from the Activity for 1 minute passes control to the longest-connected viewer. Held keys/buttons are released on every change.
 - Viewers from any VC/guild may watch (view-only unless handed control).
@@ -39,7 +39,7 @@ Audio (`AUDIO_MODE`): `spawn` (the image's default) runs a private `pulseaudio` 
 
 Paths from env (`DATA_DIR`, `GAMES_DIR`, `CATALOG_PATH`, `WINEPREFIX`) are made absolute at start, since Wine runs from the exe's directory.
 
-Every process gets its own process group; stop = `wineserver -k`, then SIGTERM (SIGKILL after 3s) in reverse start order. Game exit is detected by polling `/proc` for a process whose argv0 basename is the exe name (launchers hand off to children, so the `wine` process itself isn't waited on); not seen within 90s = failure. Nav macro: after `nav_delay` (default 15s), keys tapped 400ms apart; `wait:<dur>` steps pause.
+Every process gets its own process group; stop = `wineserver -k`, then SIGTERM (SIGKILL after 3s) in reverse start order. Game exit is detected by polling `/proc` for a process whose argv0 basename is the exe name (launchers hand off to children, so the `wine` process itself isn't waited on); not seen within 90s = failure.
 
 ## Stream and Activity protocol
 

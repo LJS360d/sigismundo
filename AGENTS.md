@@ -1,6 +1,6 @@
 # Sigismundo
 
-Discord Activity that hosts PC party games (Jackbox first): it runs the game under Wine on a headless X display and streams it into a Discord Activity, where the host also controls it. Monorepo: Go server (API + game pipeline) in `server/`, the Activity frontend (Vite + TS, no framework) in `activity/`; each is its own image with its own `Dockerfile` and `mise.toml`. Root holds docs, license and the example `docker-compose.yml` (dev, builds source) and `docker-compose.prod.yml` (GHCR images).
+Discord Activity that hosts PC party games (Jackbox first): it runs the game under Wine on a headless X display and streams it into a Discord Activity, where the host also controls it. Monorepo: Go server (API + game pipeline) in `server/`, the Activity frontend (Vite + TS + Preact with signals) in `activity/`; each is its own image with its own `Dockerfile` and `mise.toml`. Root holds docs, license and the example `docker-compose.yml` (dev, builds source) and `docker-compose.prod.yml` (GHCR images).
 
 ## Rules
 

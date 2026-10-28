@@ -50,7 +50,7 @@ type Starter func(runner.Spec, func(string)) (*runner.Run, error)
 
 type Session struct {
 	ID         string
-	Pick       catalog.Pick
+	Entry      catalog.Entry
 	Host       User
 	Controller User
 	GuildID    string
@@ -83,7 +83,7 @@ func (m *Manager) SetStarter(s Starter) { m.start = s }
 
 // Start begins a session hosted by host in the given VC. The pipeline comes
 // up in the background; viewers follow progress through Status.
-func (m *Manager) Start(pick catalog.Pick, host User, guildID, channelID string) (View, error) {
+func (m *Manager) Start(entry catalog.Entry, host User, guildID, channelID string) (View, error) {
 	m.mu.Lock()
 	if m.cur != nil {
 		v := m.viewLocked(nil)
@@ -92,7 +92,7 @@ func (m *Manager) Start(pick catalog.Pick, host User, guildID, channelID string)
 	}
 	s := &Session{
 		ID:         newID(),
-		Pick:       pick,
+		Entry:      entry,
 		Host:       host,
 		Controller: host,
 		GuildID:    guildID,
@@ -104,7 +104,7 @@ func (m *Manager) Start(pick catalog.Pick, host User, guildID, channelID string)
 	m.lastSeen = time.Now()
 	v := m.viewLocked(nil)
 	m.mu.Unlock()
-	logger.Infof("session %s: %s hosting %s", s.ID, host.Name, pick.Key())
+	logger.Infof("session %s: %s hosting %s", s.ID, host.Name, entry.ID)
 	m.broadcast()
 
 	go m.launch(s)
@@ -113,7 +113,7 @@ func (m *Manager) Start(pick catalog.Pick, host User, guildID, channelID string)
 
 func (m *Manager) launch(s *Session) {
 	spec := runner.Spec{
-		Pick:       s.Pick,
+		Entry:      s.Entry,
 		WinePrefix: config.WinePrefix,
 		Display:    config.DisplayNum,
 		HostAudio:  config.HostAudio,
@@ -387,8 +387,8 @@ func (m *Manager) viewLocked(u *User) View {
 	}
 	v.Session = &SessionView{
 		ID:         s.ID,
-		Key:        s.Pick.Key(),
-		Name:       s.Pick.Name(),
+		Key:        s.Entry.ID,
+		Name:       s.Entry.Name,
 		Host:       s.Host,
 		Controller: s.Controller,
 		GuildID:    s.GuildID,

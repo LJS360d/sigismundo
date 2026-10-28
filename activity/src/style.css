@@ -29,12 +29,12 @@ button.danger { background: var(--danger); border-color: var(--danger); }
 .error { color: var(--danger); }
 .muted { color: var(--muted); }
 
-.picker { height: 100%; overflow: auto; padding: 16px; display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); align-content: start; }
-.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
-.card h2 { margin: 0 0 10px; font-size: 1rem; }
-.games { display: flex; flex-wrap: wrap; gap: 6px; }
-.game { background: var(--accent); border-color: var(--accent); }
-.game.secondary { background: none; border-color: var(--line); }
+.catalog { height: 100%; overflow: auto; padding: 16px; display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); align-content: start; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.card h2 { margin: 0; font-size: 1rem; }
+.card p { margin: 0; font-size: 0.9rem; }
+.cover { width: calc(100% + 24px); margin: -12px -12px 0; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 8px 8px 0 0; }
+.launch { margin-top: auto; align-self: start; background: var(--accent); border-color: var(--accent); }
 
 .stage { position: fixed; inset: 0; background: #000; }
 .stream { width: 100%; height: 100%; object-fit: contain; display: block; outline: none; touch-action: none; }

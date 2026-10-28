@@ -8,7 +8,7 @@ Bring your own games: launcher-free copies, mounted into the container with a sm
 
 1. In a voice channel, open Sigismundo from the Activities shelf (rocket button) and pick a game; whoever picks first hosts.
 2. The game fills the Activity; the host's mouse and keyboard go straight to it. Players read the room code off the stream and join on jackbox.tv.
-3. Quitting the game, Esc → Stop game, or 10 minutes without anyone watching ends it and brings back the picker.
+3. Quitting the game, Esc → Stop game, or 10 minutes without anyone watching ends it and brings back the catalog.
 
 Two parts, two images: `server/` (API, game pipeline) and `activity/` (the Activity frontend, nginx proxying `/api` to the server).
 

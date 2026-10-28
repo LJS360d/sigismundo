@@ -8,7 +8,9 @@
   },
   "dependencies": {
     "@discord/embedded-app-sdk": "^2.5.0",
-    "opus-decoder": "^0.7.12"
+    "@preact/signals": "^2.11.4",
+    "opus-decoder": "^0.7.12",
+    "preact": "^11.0.2"
   },
   "devDependencies": {
     "typescript": "^6.0.3",

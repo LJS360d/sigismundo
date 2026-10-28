@@ -1,4 +1,4 @@
-// Package catalog loads the hand-written manifest of launchable games.
+// Package catalog loads the hand-written manifest of launchable apps.
 package catalog
 
 import (
@@ -6,52 +6,25 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
-// Entry is one executable: a pack with several games, or a single game.
+// Entry is one launchable executable.
 type Entry struct {
-	ID   string `yaml:"id" json:"id"`
-	Name string `yaml:"name" json:"name"`
-	// Exe is absolute, or relative to the catalog file's directory.
-	Exe  string   `yaml:"exe" json:"-"`
-	Args []string `yaml:"args" json:"-"`
-	// NavDelay is how long after launch the menu accepts nav input.
-	NavDelay time.Duration `yaml:"nav_delay" json:"-"`
-	Games    []Game        `yaml:"games" json:"games,omitempty"`
-}
-
-type Game struct {
-	ID   string `yaml:"id" json:"id"`
-	Name string `yaml:"name" json:"name"`
-	// Nav is the key sequence from the pack menu to the game; empty stops at the menu.
-	Nav []string `yaml:"nav" json:"-"`
+	ID          string `yaml:"id" json:"id"`
+	Name        string `yaml:"name" json:"name"`
+	Description string `yaml:"description" json:"description,omitempty"`
+	// Exe and Image are absolute, or relative to the catalog file's directory.
+	Exe   string   `yaml:"exe" json:"-"`
+	Args  []string `yaml:"args" json:"-"`
+	Image string   `yaml:"image" json:"-"`
+	// ImageURL is where the API serves Image.
+	ImageURL string `yaml:"-" json:"image,omitempty"`
 }
 
 type Catalog struct {
 	Entries []Entry
-}
-
-// Pick is a resolved selection: an entry, and optionally one of its games.
-type Pick struct {
-	Entry *Entry
-	Game  *Game
-}
-
-func (p Pick) Key() string {
-	if p.Game != nil {
-		return p.Entry.ID + "/" + p.Game.ID
-	}
-	return p.Entry.ID
-}
-
-func (p Pick) Name() string {
-	if p.Game != nil {
-		return p.Game.Name + " (" + p.Entry.Name + ")"
-	}
-	return p.Entry.Name
 }
 
 // Load reads the manifest and drops entries whose exe is missing. The second
@@ -86,42 +59,32 @@ func parse(b []byte, dir string, exists func(string) bool) (*Catalog, []string, 
 		if e.Name == "" {
 			e.Name = e.ID
 		}
-		if !filepath.IsAbs(e.Exe) {
-			e.Exe = filepath.Join(dir, e.Exe)
-		}
+		e.Exe = resolve(dir, e.Exe)
 		if !exists(e.Exe) {
 			missing = append(missing, e.ID)
 			continue
 		}
-		for i := range e.Games {
-			if e.Games[i].ID == "" {
-				return nil, nil, fmt.Errorf("catalog: game %q in %q needs an id", e.Games[i].Name, e.ID)
-			}
-			if e.Games[i].Name == "" {
-				e.Games[i].Name = e.Games[i].ID
-			}
+		if e.Image != "" {
+			e.Image = resolve(dir, e.Image)
+			e.ImageURL = "/api/catalog/" + e.ID + "/image"
 		}
 		c.Entries = append(c.Entries, e)
 	}
 	return c, missing, nil
 }
 
-// Resolve turns "entry" or "entry/game" into a Pick.
-func (c *Catalog) Resolve(key string) (Pick, bool) {
-	entryID, gameID, _ := strings.Cut(key, "/")
+func resolve(dir, p string) string {
+	if filepath.IsAbs(p) {
+		return p
+	}
+	return filepath.Join(dir, p)
+}
+
+func (c *Catalog) Get(id string) (*Entry, bool) {
 	for i := range c.Entries {
-		e := &c.Entries[i]
-		if e.ID != entryID {
-			continue
-		}
-		if gameID == "" {
-			return Pick{Entry: e}, true
-		}
-		for j := range e.Games {
-			if e.Games[j].ID == gameID {
-				return Pick{Entry: e, Game: &e.Games[j]}, true
-			}
+		if c.Entries[i].ID == id {
+			return &c.Entries[i], true
 		}
 	}
-	return Pick{}, false
+	return nil, false
 }

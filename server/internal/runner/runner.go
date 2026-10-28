@@ -23,15 +23,17 @@ import (
 	"sigismundo/internal/stream"
 )
 
+// dxvkDir holds DXVK's x64 DLLs (the image). wined3d's GL path renders
+// D3D11 games black on llvmpipe; DXVK on lavapipe works.
+const dxvkDir = "/opt/dxvk"
+
 const (
 	// how long the game exe may take to show up as a process
 	startGrace = 90 * time.Second
-	navDelay   = 15 * time.Second
-	navStep    = 400 * time.Millisecond
 )
 
 type Spec struct {
-	Pick       catalog.Pick
+	Entry      catalog.Entry
 	WinePrefix string
 	// Display is the X display number Xvfb takes.
 	Display int
@@ -76,13 +78,21 @@ func Start(spec Spec, status func(string)) (*Run, error) {
 	if spec.HostAudio {
 		r.sink = "sigismundo_" + strconv.Itoa(os.Getpid())
 	}
+	overrides := "winemenubuilder.exe=d;mscoree=;mshtml="
+	_, err = os.Stat(dxvkDir)
+	dxvk := err == nil
+	if dxvk {
+		overrides += ";d3d11,dxgi=n"
+	}
 	r.env = append(os.Environ(),
 		"DISPLAY="+r.display,
 		"PULSE_SINK="+r.sink,
 		"WINEPREFIX="+spec.WinePrefix,
-		"WINEDEBUG=-all",
-		"WINEDLLOVERRIDES=winemenubuilder.exe=d;mscoree=;mshtml=",
+		"WINEDLLOVERRIDES="+overrides,
 	)
+	if os.Getenv("WINEDEBUG") == "" {
+		r.env = append(r.env, "WINEDEBUG=-all")
+	}
 	if !spec.HostAudio {
 		r.env = append(r.env, "XDG_RUNTIME_DIR="+runtime, "PULSE_SERVER=unix:"+pulse)
 	}
@@ -137,15 +147,20 @@ func Start(spec Spec, status func(string)) (*Run, error) {
 		}
 		r.wineserver("-w")
 	}
+	if dxvk {
+		if err := installDXVK(spec.WinePrefix); err != nil {
+			return nil, fmt.Errorf("dxvk: %w", err)
+		}
+	}
 
 	r.Input, err = input.Open(r.display)
 	if err != nil {
 		return nil, fmt.Errorf("input: %w", err)
 	}
 
-	status("Launching " + spec.Pick.Name())
-	exe := spec.Pick.Entry.Exe
-	args := append([]string{"explorer", fmt.Sprintf("/desktop=sigismundo,%dx%d", config.Width, config.Height), exe}, spec.Pick.Entry.Args...)
+	status("Launching " + spec.Entry.Name)
+	exe := spec.Entry.Exe
+	args := append([]string{"explorer", fmt.Sprintf("/desktop=sigismundo,%dx%d", config.Width, config.Height), exe}, spec.Entry.Args...)
 	if _, err := r.spawn("wine", filepath.Dir(exe), nil, "wine", args...); err != nil {
 		return nil, err
 	}
@@ -158,9 +173,6 @@ func Start(spec Spec, status func(string)) (*Run, error) {
 	}
 
 	go r.watchGame(filepath.Base(exe))
-	if spec.Pick.Game != nil && len(spec.Pick.Game.Nav) > 0 {
-		go r.navigate(status)
-	}
 	ok = true
 	return r, nil
 }
@@ -227,34 +239,6 @@ func (r *Run) startAudio() error {
 		r.finish(fmt.Errorf("audio encoder stopped: %w", err))
 	}()
 	return nil
-}
-
-// navigate types the game's nav macro once the pack menu had time to load.
-// A "wait:<duration>" step pauses instead of pressing a key.
-func (r *Run) navigate(status func(string)) {
-	delay := r.spec.Pick.Entry.NavDelay
-	if delay == 0 {
-		delay = navDelay
-	}
-	select {
-	case <-time.After(delay):
-	case <-r.Done:
-		return
-	}
-	status("Opening " + r.spec.Pick.Game.Name)
-	for _, step := range r.spec.Pick.Game.Nav {
-		if d, ok := strings.CutPrefix(step, "wait:"); ok {
-			if wait, err := time.ParseDuration(d); err == nil {
-				time.Sleep(wait)
-			}
-			continue
-		}
-		if err := r.Input.Tap(step); err != nil {
-			logger.Warnf("nav %s: %v", r.spec.Pick.Key(), err)
-		}
-		time.Sleep(navStep)
-	}
-	status("")
 }
 
 // watchGame ends the run once the game process has come and gone. Wine
@@ -432,4 +416,20 @@ func waitPath(p string, timeout time.Duration) error {
 		time.Sleep(100 * time.Millisecond)
 	}
 	return fmt.Errorf("%s did not appear within %s", p, timeout)
+}
+
+// installDXVK copies DXVK's DLLs into the prefix each launch, so an image
+// update reaches existing prefixes.
+func installDXVK(prefix string) error {
+	sys := filepath.Join(prefix, "drive_c", "windows", "system32")
+	for _, dll := range []string{"d3d11.dll", "dxgi.dll"} {
+		b, err := os.ReadFile(filepath.Join(dxvkDir, dll))
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(sys, dll), b, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
 }

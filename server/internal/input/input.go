@@ -109,14 +109,6 @@ func (in *Injector) Key(name string, down bool) error {
 	return xtest.FakeInputChecked(in.conn, typ, byte(code), 0, in.root, 0, 0, 0).Check()
 }
 
-// Tap presses and releases a key.
-func (in *Injector) Tap(name string) error {
-	if err := in.Key(name, true); err != nil {
-		return err
-	}
-	return in.Key(name, false)
-}
-
 // ReleaseAll lifts every held key and button, used when control changes hands.
 func (in *Injector) ReleaseAll() {
 	in.mu.Lock()

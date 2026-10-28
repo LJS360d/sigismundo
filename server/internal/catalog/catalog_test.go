@@ -5,15 +5,12 @@ import "testing"
 const manifest = `
 - id: jpp7
   name: The Jackbox Party Pack 7
+  description: Quiplash 3 and friends
   exe: jpp7/Pack7.exe
-  nav_delay: 20s
-  games:
-    - { id: quiplash3, name: Quiplash 3, nav: [Return] }
-    - { id: devils, name: The Devils and the Details }
+  image: jpp7/cover.png
 - id: missing
   exe: /nope/game.exe
 - id: drawful2
-  name: Drawful 2
   exe: /abs/Drawful2.exe
 `
 
@@ -31,25 +28,25 @@ func TestParse(t *testing.T) {
 	if len(c.Entries) != 2 || len(missing) != 1 || missing[0] != "missing" {
 		t.Fatalf("entries %d missing %v", len(c.Entries), missing)
 	}
-	if c.Entries[0].Exe != "/games/jpp7/Pack7.exe" {
-		t.Fatalf("relative exe not resolved: %s", c.Entries[0].Exe)
+	e := c.Entries[0]
+	if e.Exe != "/games/jpp7/Pack7.exe" || e.Image != "/games/jpp7/cover.png" {
+		t.Fatalf("relative paths not resolved: %s %s", e.Exe, e.Image)
 	}
-	if c.Entries[0].NavDelay.Seconds() != 20 {
-		t.Fatalf("nav_delay %v", c.Entries[0].NavDelay)
+	if e.ImageURL != "/api/catalog/jpp7/image" {
+		t.Fatalf("image url %q", e.ImageURL)
+	}
+	if d := c.Entries[1]; d.Name != "drawful2" || d.ImageURL != "" {
+		t.Fatalf("defaults %+v", d)
 	}
 }
 
-func TestResolve(t *testing.T) {
+func TestGet(t *testing.T) {
 	c, _ := load(t)
-	p, ok := c.Resolve("jpp7/quiplash3")
-	if !ok || p.Game.Name != "Quiplash 3" || p.Key() != "jpp7/quiplash3" {
-		t.Fatalf("resolve game: %v %+v", ok, p)
+	if e, ok := c.Get("drawful2"); !ok || e.Exe != "/abs/Drawful2.exe" {
+		t.Fatalf("get: %v %+v", ok, e)
 	}
-	if p, ok := c.Resolve("drawful2"); !ok || p.Game != nil {
-		t.Fatalf("resolve entry: %v %+v", ok, p)
-	}
-	if _, ok := c.Resolve("jpp7/nope"); ok {
-		t.Fatal("resolved unknown game")
+	if _, ok := c.Get("missing"); ok {
+		t.Fatal("got dropped entry")
 	}
 }
 
@@ -58,7 +55,6 @@ func TestParseErrors(t *testing.T) {
 		"- { name: x }",
 		"- { id: a/b, exe: x }",
 		"- { id: a, exe: x }\n- { id: a, exe: y }",
-		"- { id: a, exe: x, games: [ { name: g } ] }",
 	} {
 		if _, _, err := parse([]byte(m), "/", func(string) bool { return true }); err == nil {
 			t.Errorf("no error for %q", m)

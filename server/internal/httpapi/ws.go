@@ -118,11 +118,11 @@ func (c *wsClient) handle(m clientMsg) error {
 	uid := c.viewer.ID
 	switch m.T {
 	case "start":
-		pick, ok := mgr.Catalog.Resolve(m.Key)
+		e, ok := mgr.Catalog.Get(m.Key)
 		if !ok {
 			return errors.New("unknown game")
 		}
-		_, err := mgr.Start(pick, c.viewer.User, c.viewer.GuildID, c.viewer.ChannelID)
+		_, err := mgr.Start(*e, c.viewer.User, c.viewer.GuildID, c.viewer.ChannelID)
 		return err
 	case "stop":
 		return mgr.Stop(uid)
