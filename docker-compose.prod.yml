@@ -27,5 +27,5 @@ services:
     volumes:
       - ./data:/data
       - ./games:/games:ro
-    shm_size: 1g
+    shm_size: 4g
     restart: unless-stopped
