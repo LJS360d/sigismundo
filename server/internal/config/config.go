@@ -35,6 +35,11 @@ var (
 	VideoBitrate int
 	AudioBitrate int
 	IdleTimeout  time.Duration
+	// GPU: render node (auto, none or a path), whether games render on it
+	// (auto, true, false) and the H.264 encoder (auto or an ffmpeg encoder).
+	GPUDevice    string
+	GPURender    string
+	VideoEncoder string
 )
 
 func init() {
@@ -81,6 +86,9 @@ func init() {
 	VideoBitrate = envInt("STREAM_VIDEO_KBPS", 2500)
 	AudioBitrate = envInt("STREAM_AUDIO_KBPS", 96)
 	IdleTimeout = envDuration("IDLE_TIMEOUT", 10*time.Minute)
+	GPUDevice = envOr("GPU_DEVICE", "auto")
+	GPURender = envOr("GPU_RENDER", "auto")
+	VideoEncoder = envOr("VIDEO_ENCODER", "auto")
 
 	log.Println("Config initialized")
 }

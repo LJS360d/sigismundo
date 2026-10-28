@@ -30,6 +30,14 @@ services:
     volumes:
       - ./server/data:/data
       - ./games:/games:ro
+    # Optional, render and encode on the GPU (see GPU_* in server/.env.example).
+    # RENDER_GID is the group owning the node: stat -c %g /dev/dri/renderD128
+    # NVIDIA (proprietary driver) needs the NVIDIA Container Toolkit instead:
+    # deploy.resources.reservations.devices with capabilities [gpu, video].
+    # devices:
+    #   - /dev/dri:/dev/dri
+    # group_add:
+    #   - "${RENDER_GID}"
     # Wine and Xvfb use shared memory; the 64MB default is too small.
     shm_size: 1g
     restart: unless-stopped

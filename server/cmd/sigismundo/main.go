@@ -10,6 +10,7 @@ import (
 	"sigismundo/internal/config"
 	"sigismundo/internal/httpapi"
 	"sigismundo/internal/logger"
+	"sigismundo/internal/runner"
 	"sigismundo/internal/session"
 )
 
@@ -41,6 +42,8 @@ func main() {
 		logger.Infof("catalog: %s skipped, exe not found", id)
 	}
 	logger.Infof("catalog: %d entries", len(cat.Entries))
+
+	runner.DetectGPU()
 
 	sessions := session.NewManager(cat)
 	stop := make(chan struct{})

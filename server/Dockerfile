@@ -20,9 +20,11 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     ca-certificates \
     ffmpeg \
     fonts-liberation \
+    intel-media-va-driver \
     libgl1-mesa-dri \
     libglx-mesa0 \
     libvulkan1 \
+    mesa-va-drivers \
     mesa-vulkan-drivers \
     pulseaudio \
     wine \

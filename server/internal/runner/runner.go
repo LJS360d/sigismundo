@@ -81,6 +81,11 @@ func Start(entry catalog.Entry, status func(string)) (*Run, error) {
 	if os.Getenv("WINEDEBUG") == "" {
 		r.env = append(r.env, "WINEDEBUG=-all")
 	}
+	// Rendering past the stream rate only burns CPU (or GPU).
+	if os.Getenv("DXVK_FRAME_RATE") == "" {
+		r.env = append(r.env, "DXVK_FRAME_RATE="+strconv.Itoa(config.FPS))
+	}
+	r.env = append(r.env, DetectGPU().Env...)
 	if !config.HostAudio {
 		r.env = append(r.env, "XDG_RUNTIME_DIR="+runtime, "PULSE_SERVER=unix:"+pulse)
 	}
@@ -166,16 +171,12 @@ func Start(entry catalog.Entry, status func(string)) (*Run, error) {
 }
 
 func (r *Run) startVideo() error {
-	kbps := strconv.Itoa(config.VideoBitrate) + "k"
-	out, err := r.spawnPipe("ffmpeg-video", "ffmpeg", "-loglevel", "error", "-nostdin",
+	args := []string{"-loglevel", "error", "-nostdin",
 		"-f", "x11grab", "-draw_mouse", "1", "-framerate", strconv.Itoa(config.FPS),
-		"-video_size", fmt.Sprintf("%dx%d", config.Width, config.Height), "-i", r.display,
-		"-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-		"-profile:v", "baseline", "-pix_fmt", "yuv420p",
-		"-b:v", kbps, "-maxrate", kbps, "-bufsize", strconv.Itoa(config.VideoBitrate/2)+"k",
-		"-g", strconv.Itoa(config.FPS*2), "-bf", "0", "-x264-params", "repeat-headers=1",
-		"-bsf:v", "h264_metadata=aud=insert",
-		"-flush_packets", "1", "-f", "h264", "-")
+		"-video_size", fmt.Sprintf("%dx%d", config.Width, config.Height), "-i", r.display}
+	args = append(args, DetectGPU().Args...)
+	args = append(args, "-flush_packets", "1", "-f", "h264", "-")
+	out, err := r.spawnPipe("ffmpeg-video", "ffmpeg", args...)
 	if err != nil {
 		return err
 	}

@@ -27,5 +27,13 @@ services:
     volumes:
       - ./data:/data
       - ./games:/games:ro
+    # Optional, render and encode on the GPU (see GPU_* in server/.env.example).
+    # RENDER_GID is the group owning the node: stat -c %g /dev/dri/renderD128
+    # NVIDIA (proprietary driver) needs the NVIDIA Container Toolkit instead:
+    # deploy.resources.reservations.devices with capabilities [gpu, video].
+    # devices:
+    #   - /dev/dri:/dev/dri
+    # group_add:
+    #   - "${RENDER_GID}"
     shm_size: 4g
     restart: unless-stopped
