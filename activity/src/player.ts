@@ -6,6 +6,9 @@ const KIND_AUDIO = 2;
 const FLAG_KEY = 1;
 // how far ahead of the audio clock packets are scheduled, absorbs jitter
 const JITTER = 0.12;
+// a backlog past this (bursty delivery) restarts at JITTER; video follows the
+// audio clock, so this bounds the added delay for both
+const MAX_AHEAD = 0.25;
 const MAX_QUEUED_FRAMES = 30;
 
 type Decoded = { ts: number; frame: VideoFrame };
@@ -129,7 +132,7 @@ export class Player {
     if (this.audioBlocked) return;
     const now = this.ctx.currentTime;
     let at = this.nextAudio;
-    if (at < now || at > now + 0.5) at = now + JITTER;
+    if (at < now || at > now + MAX_AHEAD) at = now + JITTER;
     const buf = this.ctx.createBuffer(chans.length, chans[0].length, rate);
     chans.forEach((c, i) => buf.copyToChannel(c as Float32Array<ArrayBuffer>, i));
     const src = this.ctx.createBufferSource();

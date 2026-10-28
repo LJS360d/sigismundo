@@ -150,11 +150,12 @@ func encoders(device string) []encoder {
 	with := func(args ...string) []string { return append(args, rate...) }
 	var vaapi [][]string
 	// Plain, then low-power (all some Intel drivers offer); color conversion
-	// on the GPU, then on the CPU.
+	// on the GPU, then on the CPU. async_depth 1 keeps one frame in flight
+	// instead of two, a frame less of latency.
 	for _, lp := range []string{"0", "1"} {
 		for _, vf := range []string{"hwupload,scale_vaapi=format=nv12", "format=nv12,hwupload"} {
 			vaapi = append(vaapi, with("-vaapi_device", device, "-vf", vf, "-c:v", "h264_vaapi", "-low_power", lp,
-				"-profile:v", "constrained_baseline", "-rc_mode", "CBR", "-aud", "1"))
+				"-async_depth", "1", "-profile:v", "constrained_baseline", "-rc_mode", "CBR", "-aud", "1"))
 		}
 	}
 	return []encoder{
