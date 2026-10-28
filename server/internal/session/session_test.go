@@ -61,32 +61,8 @@ func TestLifecycleAndPermissions(t *testing.T) {
 	}
 	waitRunning(t, m)
 
-	if err := m.SetRoomCode("1", "abcd"); err != nil || m.View(nil).Session.RoomCode != "ABCD" {
-		t.Fatalf("room code: %v", err)
-	}
-	if err := m.SetRoomCode("1", "AB1D"); err != ErrBadCode {
-		t.Fatalf("bad code: %v", err)
-	}
 	if err := m.Stop("3"); err != ErrForbidden {
 		t.Fatalf("eve stop: %v", err)
-	}
-
-	vb := &Viewer{User: bob}
-	m.Attach(vb)
-	if err := m.Handoff("1", "2"); err != nil {
-		t.Fatal(err)
-	}
-	if v := m.View(&bob); v.Role != "controller" {
-		t.Fatalf("bob role %q", v.Role)
-	}
-	if v := m.View(&alice); v.Role != "host" || !v.CanReclaim {
-		t.Fatalf("alice view %+v", v)
-	}
-	if err := m.TakeControl(eve); err != ErrForbidden {
-		t.Fatalf("eve take: %v", err)
-	}
-	if err := m.TakeControl(alice); err != nil {
-		t.Fatal(err)
 	}
 
 	if err := m.Stop("1"); err != nil {

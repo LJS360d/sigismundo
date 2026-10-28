@@ -31,7 +31,6 @@ type clientMsg struct {
 	GuildID   string  `json:"guild_id"`
 	ChannelID string  `json:"channel_id"`
 	Key       string  `json:"key"`
-	To        string  `json:"to"`
 	Code      string  `json:"code"`
 	X         float64 `json:"x"`
 	Y         float64 `json:"y"`
@@ -127,12 +126,6 @@ func (c *wsClient) handle(m clientMsg) error {
 		return err
 	case "stop":
 		return mgr.Stop(uid)
-	case "handoff":
-		return mgr.Handoff(uid, m.To)
-	case "take":
-		return mgr.TakeControl(c.viewer.User)
-	case "room":
-		return mgr.SetRoomCode(uid, m.Code)
 	case "m":
 		return quiet(mgr.Input(uid, func(in *input.Injector) error { return in.MoveRel(clamp01(m.X), clamp01(m.Y)) }))
 	case "b":

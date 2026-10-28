@@ -18,8 +18,6 @@ type Entry struct {
 	// Exe is absolute, or relative to the catalog file's directory.
 	Exe  string   `yaml:"exe" json:"-"`
 	Args []string `yaml:"args" json:"-"`
-	// JoinURL is where players join, {code} is replaced by the room code.
-	JoinURL string `yaml:"join_url" json:"join_url,omitempty"`
 	// NavDelay is how long after launch the menu accepts nav input.
 	NavDelay time.Duration `yaml:"nav_delay" json:"-"`
 	Games    []Game        `yaml:"games" json:"games,omitempty"`
@@ -54,14 +52,6 @@ func (p Pick) Name() string {
 		return p.Game.Name + " (" + p.Entry.Name + ")"
 	}
 	return p.Entry.Name
-}
-
-func (p Pick) JoinURL(code string) string {
-	u := p.Entry.JoinURL
-	if u == "" {
-		u = "https://jackbox.tv/"
-	}
-	return strings.ReplaceAll(u, "{code}", code)
 }
 
 // Load reads the manifest and drops entries whose exe is missing. The second
@@ -134,24 +124,4 @@ func (c *Catalog) Resolve(key string) (Pick, bool) {
 		}
 	}
 	return Pick{}, false
-}
-
-// Search returns every pick whose name or key contains q (case-insensitive),
-// games before their pack menus, at most limit.
-func (c *Catalog) Search(q string, limit int) []Pick {
-	q = strings.ToLower(strings.TrimSpace(q))
-	var out []Pick
-	match := func(p Pick) {
-		if len(out) < limit && (q == "" || strings.Contains(strings.ToLower(p.Name()+" "+p.Key()), q)) {
-			out = append(out, p)
-		}
-	}
-	for i := range c.Entries {
-		e := &c.Entries[i]
-		for j := range e.Games {
-			match(Pick{Entry: e, Game: &e.Games[j]})
-		}
-		match(Pick{Entry: e})
-	}
-	return out
 }

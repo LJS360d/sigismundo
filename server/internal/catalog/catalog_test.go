@@ -53,20 +53,6 @@ func TestResolve(t *testing.T) {
 	}
 }
 
-func TestSearch(t *testing.T) {
-	c, _ := load(t)
-	if got := c.Search("", 25); len(got) != 4 {
-		t.Fatalf("all: %d", len(got))
-	}
-	got := c.Search("quip", 25)
-	if len(got) != 1 || got[0].Key() != "jpp7/quiplash3" {
-		t.Fatalf("quip: %+v", got)
-	}
-	if got := c.Search("", 2); len(got) != 2 {
-		t.Fatalf("limit: %d", len(got))
-	}
-}
-
 func TestParseErrors(t *testing.T) {
 	for _, m := range []string{
 		"- { name: x }",

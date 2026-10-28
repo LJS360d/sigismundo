@@ -7,9 +7,8 @@ Bring your own games: launcher-free copies, mounted into the container with a sm
 ## How it works
 
 1. In a voice channel, open Sigismundo from the Activities shelf (rocket button) and pick a game; whoever picks first hosts.
-2. The game starts inside the Activity. **Screen** tab: the live game. **Play** tab: room code + button to open jackbox.tv.
-3. The host types the room code once it shows, it shows in everyone's Play tab.
-4. The Stop button, quitting the game or 10 minutes without anyone watching ends it.
+2. The game fills the Activity; the host's mouse and keyboard go straight to it. Players read the room code off the stream and join on jackbox.tv.
+3. Quitting the game, Esc → Stop game, or 10 minutes without anyone watching ends it and brings back the picker.
 
 Two parts, two images: `server/` (API, game pipeline) and `activity/` (the Activity frontend, nginx proxying `/api` to the server).
 
@@ -74,6 +73,6 @@ cd server && make local             # API on 127.0.0.1:8080
 cd activity && pnpm install && pnpm dev
 ```
 
-Open `http://localhost:5173/?user=1&name=me`, pick a game. A second tab with `?user=2&name=friend` acts as another viewer (handoff, view-only).
+Open `http://localhost:5173/?user=1&name=me`, pick a game. A second tab with `?user=2&name=friend` acts as another viewer (view-only).
 
 With Discord: fill `CLIENT_ID` and `CLIENT_SECRET` in `server/.env`, run `make dev` instead of `make local`, expose the dev server over HTTPS (`cloudflared tunnel --url http://localhost:5173`) and set that host as the Activity's root URL mapping.

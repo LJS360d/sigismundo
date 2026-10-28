@@ -23,9 +23,9 @@ No voice connection: nothing joins the VC. Audio and video both travel in the Ac
 ## Session lifecycle
 
 - `Start` fails with `ErrBusy` while any session exists. The pipeline comes up in the background; `Status` strings reach viewers.
-- Ends on: the Activity Stop button (host, controller or owner); game exit (runner); pipeline failure; no viewers for `idle_timeout` (counted from the later of session start and last viewer leaving).
-- Control: host starts with it. Host/controller/owners can hand it to any connected viewer; host and owners can take it back. The controller being absent from the Activity for 1 minute passes control to the longest-connected viewer. Held keys/buttons are released on every change.
-- Room code: typed by host/controller/owner (4 letters), shown in the Play tab. No OCR.
+- Activity UI: picker with no session, otherwise only the fullscreen stream (status overlay while starting). Keyboard goes to the game window-wide for the controller; first click/key unlocks audio. Esc is never forwarded: it toggles a Stop/Back menu.
+- Ends on: Esc menu Stop (host, controller or owner); game exit (runner); pipeline failure; no viewers for `idle_timeout` (counted from the later of session start and last viewer leaving).
+- Control: host starts with it, no manual handoff. The controller being absent from the Activity for 1 minute passes control to the longest-connected viewer. Held keys/buttons are released on every change.
 - Viewers from any VC/guild may watch (view-only unless handed control).
 
 ## Runner
@@ -43,10 +43,9 @@ Every process gets its own process group; stop = `wineserver -k`, then SIGTERM (
 
 ## Stream and Activity protocol
 
-- WebSocket `/api/ws?token=…`. First client message `{t:"hello", guild_id, channel_id}` attaches the viewer. Then: `start {key}`, `stop`, `handoff {to}`, `take`, `room {code}`, input `m {x,y}` (0–1 of the frame), `b {b,d}` (X buttons 1–5, 4/5 wheel), `k {code,d}` (`KeyboardEvent.code`, mapped to keysyms in `input`). Input from anyone but the controller is dropped silently.
-- Server text messages: `{t:"state", me, session, viewers, role, can_reclaim, privileged}` on every change, `{t:"error", message}`.
+- WebSocket `/api/ws?token=…`. First client message `{t:"hello", guild_id, channel_id}` attaches the viewer. Then: `start {key}`, `stop`, input `m {x,y}` (0–1 of the frame), `b {b,d}` (X buttons 1–5, 4/5 wheel), `k {code,d}` (`KeyboardEvent.code`, mapped to keysyms in `input`). Input from anyone but the controller is dropped silently.
+- Server text messages: `{t:"state", me, session, viewers, role}` on every change, `{t:"error", message}`.
 - Binary messages: `kind u8 (1 video, 2 audio) | flags u8 (1 key) | ts u64 BE µs | payload`. Timestamps are arrival time at the server on one clock for both streams. Video payload is one Annex B access unit.
 - Hub: each subscriber has a buffered channel; a full channel drops the frame, and for video then waits for the next keyframe. New subscribers get the current GOP replayed first.
 - Client: `VideoDecoder` (codec string from the SPS, no description = Annex B). Audio via `AudioDecoder` when it supports Opus, else WASM `opus-decoder`. Audio buffers play back to back ~120ms ahead; each one maps server time to `AudioContext` time, and video frames are shown when due on that clock (immediately while audio is blocked by autoplay).
 - Auth: Embedded App SDK `authorize` → `POST /api/token {code}` (server exchanges with `CLIENT_SECRET`, reads `/users/@me`) → returns the access token for `authenticate` plus an HMAC token (`SESSION_SECRET`, 12h) used on the WebSocket. Outside Discord (no `frame_id` query) the client uses `/api/dev-token`, served only with `DEV_AUTH` in development or in `local` mode.
-- Play tab: room code + "Open jackbox.tv" via `openExternalLink` (browser). jackbox.tv is not proxied into the Activity.

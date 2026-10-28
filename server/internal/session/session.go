@@ -23,7 +23,6 @@ var (
 	ErrBusy      = errors.New("a session is already running")
 	ErrNoSession = errors.New("no session is running")
 	ErrForbidden = errors.New("you can't do that in this session")
-	ErrBadCode   = errors.New("room codes are 4 letters")
 )
 
 // controllerGrace is how long the controller may be away from the Activity
@@ -58,7 +57,6 @@ type Session struct {
 	ChannelID  string
 	Started    time.Time
 	Status     string
-	RoomCode   string
 	run        *runner.Run
 	awaySince  time.Time
 }
@@ -205,47 +203,6 @@ func (m *Manager) privilegedLocked(userID string) bool {
 	return s.Host.ID == userID || s.Controller.ID == userID || config.IsOwner(userID)
 }
 
-// Handoff gives control to another connected viewer.
-func (m *Manager) Handoff(by, to string) error {
-	m.mu.Lock()
-	s := m.cur
-	if s == nil {
-		m.mu.Unlock()
-		return ErrNoSession
-	}
-	if !m.privilegedLocked(by) {
-		m.mu.Unlock()
-		return ErrForbidden
-	}
-	target, ok := m.viewerLocked(to)
-	if !ok {
-		m.mu.Unlock()
-		return errors.New("that user isn't watching")
-	}
-	m.setControllerLocked(target)
-	m.mu.Unlock()
-	m.broadcast()
-	return nil
-}
-
-// TakeControl lets the host or an owner reclaim control.
-func (m *Manager) TakeControl(by User) error {
-	m.mu.Lock()
-	s := m.cur
-	if s == nil {
-		m.mu.Unlock()
-		return ErrNoSession
-	}
-	if s.Host.ID != by.ID && !config.IsOwner(by.ID) {
-		m.mu.Unlock()
-		return ErrForbidden
-	}
-	m.setControllerLocked(by)
-	m.mu.Unlock()
-	m.broadcast()
-	return nil
-}
-
 func (m *Manager) setControllerLocked(u User) {
 	s := m.cur
 	if s.Controller.ID == u.ID {
@@ -257,27 +214,6 @@ func (m *Manager) setControllerLocked(u User) {
 	if s.run != nil && s.run.Input != nil {
 		s.run.Input.ReleaseAll()
 	}
-}
-
-func (m *Manager) SetRoomCode(by, code string) error {
-	code = strings.ToUpper(strings.TrimSpace(code))
-	if code != "" && (len(code) != 4 || strings.Trim(code, "ABCDEFGHIJKLMNOPQRSTUVWXYZ") != "") {
-		return ErrBadCode
-	}
-	m.mu.Lock()
-	s := m.cur
-	if s == nil {
-		m.mu.Unlock()
-		return ErrNoSession
-	}
-	if !m.privilegedLocked(by) {
-		m.mu.Unlock()
-		return ErrForbidden
-	}
-	s.RoomCode = code
-	m.mu.Unlock()
-	m.broadcast()
-	return nil
 }
 
 // Input runs fn against the display if userID controls the running session.
@@ -414,9 +350,6 @@ type View struct {
 	Viewers []User       `json:"viewers"`
 	// Role of the asking viewer: "controller", "host", "viewer" or "" when idle.
 	Role string `json:"role"`
-	// CanControl is true when the viewer could take control back.
-	CanReclaim bool `json:"can_reclaim"`
-	Privileged bool `json:"privileged"`
 }
 
 type SessionView struct {
@@ -430,8 +363,6 @@ type SessionView struct {
 	Started    time.Time `json:"started"`
 	Status     string    `json:"status"`
 	Running    bool      `json:"running"`
-	RoomCode   string    `json:"room_code"`
-	JoinURL    string    `json:"join_url"`
 }
 
 func (m *Manager) View(u *User) View {
@@ -465,8 +396,6 @@ func (m *Manager) viewLocked(u *User) View {
 		Started:    s.Started,
 		Status:     s.Status,
 		Running:    s.run != nil,
-		RoomCode:   s.RoomCode,
-		JoinURL:    s.Pick.JoinURL(s.RoomCode),
 	}
 	if u != nil {
 		switch {
@@ -477,8 +406,6 @@ func (m *Manager) viewLocked(u *User) View {
 		default:
 			v.Role = "viewer"
 		}
-		v.Privileged = m.privilegedLocked(u.ID)
-		v.CanReclaim = v.Role != "controller" && (s.Host.ID == u.ID || config.IsOwner(u.ID))
 	}
 	return v
 }
