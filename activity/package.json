@@ -13,6 +13,8 @@
     "preact": "^11.0.2"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "tailwindcss": "^4.3.3",
     "typescript": "^6.0.3",
     "vite": "^8.3.5"
   },

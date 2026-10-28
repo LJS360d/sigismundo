@@ -1,7 +1,8 @@
 import { useEffect, useRef } from "preact/hooks";
 import { useSignal } from "@preact/signals";
 import { Player } from "../player";
-import { controlling, menu, send, setMedia, type SessionView } from "../store";
+import { canLaunch, catalog, controlling, isMenuKey, MENU_KEY, menu, send, setMedia, type SessionView } from "../store";
+import { vtName } from "./Catalog";
 
 // DOM button 0/1/2 (left/middle/right) to X button 1/2/3.
 const button = (ev: PointerEvent) => (ev.button === 1 ? 2 : ev.button === 2 ? 3 : 1);
@@ -69,15 +70,21 @@ export function Stage({ session }: { session: SessionView }) {
       const p = player.current;
       if (p?.audioBlocked) p.unlock().then(() => (audioBlocked.value = p.audioBlocked));
     };
-    // Esc opens the stop menu instead of reaching the game.
+    // The menu shortcut toggles the stop menu instead of reaching the game.
     const key = (d: boolean) => (ev: KeyboardEvent) => {
       if (d) unlock();
-      if (ev.code === "Escape") {
-        if (d && !ev.repeat) menu.value = !menu.value;
+      if (d && isMenuKey(ev)) {
+        if (!ev.repeat) menu.value = !menu.value;
         ev.preventDefault();
         return;
       }
-      if (!controlling() || ev.repeat || menu.value) return;
+      if (d && menu.value && ev.code === "Escape") {
+        menu.value = false;
+        ev.preventDefault();
+        return;
+      }
+      // key-ups still pass while the menu is open, so the shortcut's modifiers don't stick
+      if (!controlling() || ev.repeat || (d && menu.value)) return;
       send({ t: "k", code: ev.code, d });
       ev.preventDefault();
     };
@@ -98,19 +105,55 @@ export function Stage({ session }: { session: SessionView }) {
   }, []);
 
   return (
-    <main class="stage">
-      <canvas ref={ref} class="stream" width={1280} height={720} />
+    <main class="fixed inset-0 bg-black" style={{ viewTransitionName: vtName(session.key) }}>
+      <canvas
+        ref={ref}
+        class={`block h-full w-full touch-none object-contain outline-none transition-opacity duration-1000 ${session.running ? "" : "opacity-0"}`}
+        width={1280}
+        height={720}
+      />
       {!session.running ? (
-        <div class="overlay">{session.status || "Starting…"}</div>
+        <Loading session={session} />
       ) : (
-        audioBlocked.value && <div class="overlay hint">Click for sound</div>
+        audioBlocked.value && <div class="pointer-events-none absolute inset-x-0 bottom-4 mx-auto w-fit rounded-lg bg-black/70 px-5 py-3">Click for sound</div>
       )}
       {menu.value && (
-        <div class="overlay">
-          <button class="danger" onClick={() => send({ t: "stop" })}>Stop game</button>
-          <button onClick={() => (menu.value = false)}>Back</button>
+        <div class="absolute inset-0 grid place-items-center bg-black/55 p-4 backdrop-blur-sm" onClick={(e) => e.target === e.currentTarget && (menu.value = false)}>
+          <div class="w-full max-w-90 rounded-xl border border-line bg-panel p-5 shadow-2xl" role="dialog" aria-label="Game menu">
+            <h2 class="mb-1.5 text-lg font-bold">Game menu</h2>
+            <p class="mb-4 text-sm leading-relaxed text-muted">The game keeps running for everyone. <kbd>Esc</kbd> or <kbd>{MENU_KEY}</kbd> to go back.</p>
+            <div class="flex justify-end gap-2">
+              <button class="btn" onClick={() => (menu.value = false)} autofocus>Back to game</button>
+              {canLaunch() && (
+                <button class="btn btn-danger" onClick={() => send({ t: "stop" })}>
+                  Stop game
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </main>
+  );
+}
+
+// Shown in place of the stream until the game is up: the card's cover, blown up.
+function Loading({ session }: { session: SessionView }) {
+  const image = catalog.value.find((e) => e.id === session.key)?.image;
+  return (
+    <div class="absolute inset-0 grid place-items-center overflow-hidden bg-bg">
+      {image && <img class="absolute inset-0 size-full animate-pan object-cover opacity-40 blur-xl" src={image} alt="" />}
+      <div class="absolute inset-0 bg-linear-to-t from-bg via-bg/40 to-transparent" />
+      <div class="relative flex w-full max-w-md flex-col items-center gap-4 px-6 text-center">
+        <h1 class="animate-rise text-3xl font-bold tracking-tight drop-shadow-lg">{session.name}</h1>
+        <div class="h-1 w-full overflow-hidden rounded-full bg-white/10">
+          <div class="h-full w-2/5 animate-shimmer rounded-full bg-linear-to-r from-transparent via-accent to-transparent" />
+        </div>
+        <p class="text-sm text-muted">{session.status || "Starting…"}</p>
+        <p class="mt-6 text-xs text-muted/80">
+          Press <kbd>{MENU_KEY}</kbd> in game for the menu.
+        </p>
+      </div>
+    </div>
   );
 }

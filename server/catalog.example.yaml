@@ -2,7 +2,12 @@
 # are skipped. Format: .knowledge/defined/catalog.md
 - id: jpp7
   name: The Jackbox Party Pack 7
-  description: Quiplash 3, The Devils and the Details, Champ'd Up, Talking Points, Blather 'Round.
+  description: |
+    Quiplash 3
+    The Devils and the Details
+    Champ'd Up
+    Talking Points
+    Blather 'Round
   exe: jpp7/The Jackbox Party Pack 7.exe
   # image: jpp7/cover.png
 

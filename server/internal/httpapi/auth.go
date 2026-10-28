@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"cmp"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -102,17 +103,10 @@ func fetchUser(accessToken string) (session.User, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&u); err != nil {
 		return session.User{}, err
 	}
-	return session.User{ID: u.ID, Name: displayName(u.GlobalName, u.Username), Avatar: AvatarURL(u.ID, u.Avatar)}, nil
+	return session.User{ID: u.ID, Name: cmp.Or(u.GlobalName, u.Username), Avatar: avatarURL(u.ID, u.Avatar)}, nil
 }
 
-func displayName(global, username string) string {
-	if global != "" {
-		return global
-	}
-	return username
-}
-
-func AvatarURL(id, hash string) string {
+func avatarURL(id, hash string) string {
 	if hash == "" {
 		return ""
 	}
@@ -140,23 +134,13 @@ func (s *Server) token(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	writeJSON(w, map[string]any{"access_token": access, "token": signToken(u), "user": u})
+	writeJSON(w, map[string]any{"access_token": access, "token": signToken(u)})
 }
 
 // devToken skips Discord entirely for local testing in a plain browser
 // (GO_ENV=development and DEV_AUTH=true only).
 func (s *Server) devToken(w http.ResponseWriter, r *http.Request) {
-	id := r.URL.Query().Get("id")
-	if id == "" {
-		id = "1"
-	}
-	u := session.User{ID: id, Name: cmpOr(r.URL.Query().Get("name"), "dev-"+id)}
-	writeJSON(w, map[string]any{"token": signToken(u), "user": u})
-}
-
-func cmpOr(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
+	id := cmp.Or(r.URL.Query().Get("id"), "1")
+	u := session.User{ID: id, Name: cmp.Or(r.URL.Query().Get("name"), "dev-"+id)}
+	writeJSON(w, map[string]any{"token": signToken(u)})
 }

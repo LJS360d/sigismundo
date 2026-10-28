@@ -1,11 +1,13 @@
 package config
 
 import (
+	"cmp"
 	"crypto/rand"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -15,7 +17,6 @@ var (
 	ClientID      string
 	ClientSecret  string
 	OwnerIDs      []string
-	Version       string
 	Env           string
 	DataDir       string
 	GamesDir      string
@@ -45,8 +46,10 @@ func init() {
 	if ClientSecret == "" {
 		log.Println("CLIENT_SECRET not set in the environment, the Activity can't authenticate users")
 	}
-	if s := os.Getenv("OWNER_IDS"); s != "" {
-		OwnerIDs = strings.Split(s, ",")
+	for id := range strings.SplitSeq(os.Getenv("OWNER_IDS"), ",") {
+		if id = strings.TrimSpace(id); id != "" {
+			OwnerIDs = append(OwnerIDs, id)
+		}
 	}
 	// Absolute, since Wine runs games from their own directory.
 	DataDir = abs(envOr("DATA_DIR", "data"))
@@ -82,14 +85,7 @@ func init() {
 	log.Println("Config initialized")
 }
 
-func IsOwner(id string) bool {
-	for _, o := range OwnerIDs {
-		if strings.TrimSpace(o) == id {
-			return true
-		}
-	}
-	return false
-}
+func IsOwner(id string) bool { return slices.Contains(OwnerIDs, id) }
 
 func abs(p string) string {
 	a, err := filepath.Abs(p)
@@ -99,12 +95,7 @@ func abs(p string) string {
 	return a
 }
 
-func envOr(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
+func envOr(key, def string) string { return cmp.Or(os.Getenv(key), def) }
 
 func envBool(key string, def bool) bool {
 	switch os.Getenv(key) {

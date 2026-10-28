@@ -1,13 +1,10 @@
-// Package session holds the single global game session: who hosts it, who
-// controls it, who is watching, and when it ends.
+// Package session holds the global state behind the Activity: who controls
+// it, who is watching, and the single game session with its lifecycle.
 package session
 
 import (
 	"crypto/rand"
-	"encoding/hex"
 	"errors"
-	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -22,7 +19,8 @@ import (
 var (
 	ErrBusy      = errors.New("a session is already running")
 	ErrNoSession = errors.New("no session is running")
-	ErrForbidden = errors.New("you can't do that in this session")
+	ErrForbidden = errors.New("only the controller can do that")
+	ErrNotOwner  = errors.New("only owners can seize control")
 )
 
 // controllerGrace is how long the controller may be away from the Activity
@@ -38,128 +36,90 @@ type User struct {
 // Viewer is one connected Activity client.
 type Viewer struct {
 	User
-	GuildID   string
-	ChannelID string
 	// Notify is called (never concurrently for one viewer) when the state changes.
 	Notify func()
 	joined time.Time
 }
 
-// Starter launches the pipeline; tests swap it out.
-type Starter func(runner.Spec, func(string)) (*runner.Run, error)
-
 type Session struct {
-	ID         string
-	Entry      catalog.Entry
-	Host       User
-	Controller User
-	GuildID    string
-	ChannelID  string
-	Started    time.Time
-	Status     string
-	run        *runner.Run
-	awaySince  time.Time
+	ID     string
+	Entry  catalog.Entry
+	Status string
+	run    *runner.Run
 }
 
 type Manager struct {
-	mu       sync.Mutex
-	Catalog  *catalog.Catalog
-	start    Starter
-	cur      *Session
-	viewers  map[*Viewer]struct{}
-	lastSeen time.Time
+	Catalog *catalog.Catalog
+	// start launches the pipeline; tests swap it out.
+	start func(catalog.Entry, func(string)) (*runner.Run, error)
+
+	mu         sync.Mutex
+	cur        *Session
+	viewers    map[*Viewer]struct{}
+	controller User
+	awaySince  time.Time
+	lastSeen   time.Time
 }
 
 func NewManager(cat *catalog.Catalog) *Manager {
-	return &Manager{
-		Catalog:  cat,
-		start:    runner.Start,
-		viewers:  map[*Viewer]struct{}{},
-		lastSeen: time.Now(),
-	}
+	return &Manager{Catalog: cat, start: runner.Start, viewers: map[*Viewer]struct{}{}, lastSeen: time.Now()}
 }
 
-func (m *Manager) SetStarter(s Starter) { m.start = s }
-
-// Start begins a session hosted by host in the given VC. The pipeline comes
-// up in the background; viewers follow progress through Status.
-func (m *Manager) Start(entry catalog.Entry, host User, guildID, channelID string) (View, error) {
+// Start begins a session on behalf of u. The pipeline comes up in the
+// background; viewers follow progress through Status.
+func (m *Manager) Start(entry catalog.Entry, u User) error {
 	m.mu.Lock()
-	if m.cur != nil {
-		v := m.viewLocked(nil)
+	if !m.privilegedLocked(u.ID) {
 		m.mu.Unlock()
-		return v, ErrBusy
+		return ErrForbidden
 	}
-	s := &Session{
-		ID:         newID(),
-		Entry:      entry,
-		Host:       host,
-		Controller: host,
-		GuildID:    guildID,
-		ChannelID:  channelID,
-		Started:    time.Now(),
-		Status:     "Starting",
+	if m.cur != nil {
+		m.mu.Unlock()
+		return ErrBusy
 	}
+	s := &Session{ID: rand.Text()[:8], Entry: entry, Status: "Starting"}
 	m.cur = s
 	m.lastSeen = time.Now()
-	v := m.viewLocked(nil)
 	m.mu.Unlock()
-	logger.Infof("session %s: %s hosting %s", s.ID, host.Name, entry.ID)
+	logger.Infof("session %s: %s started %s", s.ID, u.Name, entry.ID)
 	m.broadcast()
-
 	go m.launch(s)
-	return v, nil
+	return nil
 }
 
 func (m *Manager) launch(s *Session) {
-	spec := runner.Spec{
-		Entry:      s.Entry,
-		WinePrefix: config.WinePrefix,
-		Display:    config.DisplayNum,
-		HostAudio:  config.HostAudio,
-	}
-	run, err := m.start(spec, func(status string) { m.setStatus(s, status) })
-	m.mu.Lock()
-	if m.cur != s {
-		m.mu.Unlock()
-		if run != nil {
-			run.Stop()
-		}
-		return
-	}
+	run, err := m.start(s.Entry, func(status string) { m.update(s, func() { s.Status = status }) })
 	if err != nil {
-		m.mu.Unlock()
 		m.end(s, err)
 		return
 	}
-	s.run = run
-	s.Status = ""
-	m.mu.Unlock()
-	m.broadcast()
+	if !m.update(s, func() { s.run, s.Status = run, "" }) {
+		run.Stop()
+		return
+	}
 	<-run.Done
 	m.end(s, run.Err)
 }
 
-func (m *Manager) setStatus(s *Session, status string) {
+// update applies fn and broadcasts if s is still the current session.
+func (m *Manager) update(s *Session, fn func()) bool {
 	m.mu.Lock()
-	if m.cur != s {
-		m.mu.Unlock()
-		return
+	ok := m.cur == s
+	if ok {
+		fn()
 	}
-	s.Status = status
 	m.mu.Unlock()
-	m.broadcast()
+	if ok {
+		m.broadcast()
+	}
+	return ok
 }
 
 // end tears s down if it is still the current session.
 func (m *Manager) end(s *Session, err error) {
-	m.mu.Lock()
-	if m.cur != s {
-		m.mu.Unlock()
+	if !m.update(s, func() { m.cur = nil }) {
 		return
 	}
-	m.cur = nil
-	m.mu.Unlock()
 	if s.run != nil {
 		s.run.Stop()
 	}
@@ -168,22 +128,20 @@ func (m *Manager) end(s *Session, err error) {
 	} else {
 		logger.Infof("session %s ended", s.ID)
 	}
-	m.broadcast()
 }
 
 // Stop ends the session on behalf of userID.
 func (m *Manager) Stop(userID string) error {
 	m.mu.Lock()
 	s := m.cur
-	if s == nil {
-		m.mu.Unlock()
+	ok := m.privilegedLocked(userID)
+	m.mu.Unlock()
+	switch {
+	case s == nil:
 		return ErrNoSession
-	}
-	if !m.privilegedLocked(userID) {
-		m.mu.Unlock()
+	case !ok:
 		return ErrForbidden
 	}
-	m.mu.Unlock()
 	m.end(s, nil)
 	return nil
 }
@@ -198,20 +156,30 @@ func (m *Manager) Shutdown() {
 	}
 }
 
+// Seize makes owner u the controller.
+func (m *Manager) Seize(u User) error {
+	if !config.IsOwner(u.ID) {
+		return ErrNotOwner
+	}
+	m.mu.Lock()
+	m.setControllerLocked(u)
+	m.mu.Unlock()
+	m.broadcast()
+	return nil
+}
+
 func (m *Manager) privilegedLocked(userID string) bool {
-	s := m.cur
-	return s.Host.ID == userID || s.Controller.ID == userID || config.IsOwner(userID)
+	return m.controller.ID == userID || config.IsOwner(userID)
 }
 
 func (m *Manager) setControllerLocked(u User) {
-	s := m.cur
-	if s.Controller.ID == u.ID {
+	m.awaySince = time.Time{}
+	if m.controller.ID == u.ID {
 		return
 	}
-	logger.Infof("session %s: control %s -> %s", s.ID, s.Controller.Name, u.Name)
-	s.Controller = u
-	s.awaySince = time.Time{}
-	if s.run != nil && s.run.Input != nil {
+	logger.Infof("control %s -> %s", m.controller.Name, u.Name)
+	m.controller = u
+	if s := m.cur; s != nil && s.run != nil && s.run.Input != nil {
 		s.run.Input.ReleaseAll()
 	}
 }
@@ -219,17 +187,18 @@ func (m *Manager) setControllerLocked(u User) {
 // Input runs fn against the display if userID controls the running session.
 func (m *Manager) Input(userID string, fn func(*input.Injector) error) error {
 	m.mu.Lock()
-	s := m.cur
-	if s == nil || s.Controller.ID != userID {
+	if m.controller.ID != userID {
 		m.mu.Unlock()
 		return ErrForbidden
 	}
-	if s.run == nil || s.run.Input == nil {
-		m.mu.Unlock()
+	var in *input.Injector
+	if m.cur != nil && m.cur.run != nil {
+		in = m.cur.run.Input
+	}
+	m.mu.Unlock()
+	if in == nil {
 		return nil
 	}
-	in := s.run.Input
-	m.mu.Unlock()
 	return fn(in)
 }
 
@@ -243,18 +212,26 @@ func (m *Manager) Hub() *stream.Hub {
 	return m.cur.run.Hub
 }
 
+// Attach adds v; the first viewer of an empty Activity takes control.
 func (m *Manager) Attach(v *Viewer) {
 	m.mu.Lock()
 	v.joined = time.Now()
 	m.viewers[v] = struct{}{}
+	if m.controller.ID == "" {
+		m.setControllerLocked(v.User)
+	}
 	m.mu.Unlock()
 	m.broadcast()
 }
 
+// Detach removes v; once nobody is left, control goes to the next to join.
 func (m *Manager) Detach(v *Viewer) {
 	m.mu.Lock()
 	delete(m.viewers, v)
 	m.lastSeen = time.Now()
+	if len(m.viewers) == 0 {
+		m.controller = User{}
+	}
 	m.mu.Unlock()
 	m.broadcast()
 }
@@ -267,40 +244,33 @@ func (m *Manager) Run(stop <-chan struct{}) {
 		select {
 		case <-stop:
 			return
-		case <-t.C:
+		case now := <-t.C:
+			m.tick(now)
 		}
-		m.tick(time.Now())
 	}
 }
 
 func (m *Manager) tick(now time.Time) {
 	m.mu.Lock()
-	s := m.cur
-	if s == nil {
-		m.mu.Unlock()
-		return
-	}
 	if len(m.viewers) == 0 {
-		idle := config.IdleTimeout
-		if now.Sub(m.lastSeen) > idle && now.Sub(s.Started) > idle {
-			m.mu.Unlock()
+		s, idle := m.cur, config.IdleTimeout
+		expired := s != nil && now.Sub(m.lastSeen) > idle
+		m.mu.Unlock()
+		if expired {
 			logger.Infof("session %s: no viewers for %s", s.ID, idle)
 			m.end(s, nil)
-			return
 		}
-		m.mu.Unlock()
 		return
 	}
 	changed := false
-	if _, here := m.viewerLocked(s.Controller.ID); here {
-		s.awaySince = time.Time{}
-	} else if s.awaySince.IsZero() {
-		s.awaySince = now
-	} else if now.Sub(s.awaySince) > controllerGrace {
-		if next, ok := m.oldestViewerLocked(s.Controller.ID); ok {
-			m.setControllerLocked(next)
-			changed = true
-		}
+	switch {
+	case m.presentLocked(m.controller.ID):
+		m.awaySince = time.Time{}
+	case m.awaySince.IsZero():
+		m.awaySince = now
+	case now.Sub(m.awaySince) > controllerGrace:
+		m.setControllerLocked(m.oldestViewerLocked())
+		changed = true
 	}
 	m.mu.Unlock()
 	if changed {
@@ -308,26 +278,23 @@ func (m *Manager) tick(now time.Time) {
 	}
 }
 
-func (m *Manager) viewerLocked(id string) (User, bool) {
+func (m *Manager) presentLocked(id string) bool {
 	for v := range m.viewers {
 		if v.ID == id {
-			return v.User, true
+			return true
 		}
 	}
-	return User{}, false
+	return false
 }
 
-func (m *Manager) oldestViewerLocked(except string) (User, bool) {
+func (m *Manager) oldestViewerLocked() User {
 	var best *Viewer
 	for v := range m.viewers {
-		if v.ID != except && (best == nil || v.joined.Before(best.joined)) {
+		if best == nil || v.joined.Before(best.joined) {
 			best = v
 		}
 	}
-	if best == nil {
-		return User{}, false
-	}
-	return best.User, true
+	return best.User
 }
 
 func (m *Manager) broadcast() {
@@ -338,80 +305,34 @@ func (m *Manager) broadcast() {
 	}
 	m.mu.Unlock()
 	for _, v := range vs {
-		if v.Notify != nil {
-			v.Notify()
-		}
+		v.Notify()
 	}
 }
 
-// View is the session as shown to one viewer (anonymous with nil).
+// View is the state every viewer sees.
 type View struct {
-	Session *SessionView `json:"session"`
-	Viewers []User       `json:"viewers"`
-	// Role of the asking viewer: "controller", "host", "viewer" or "" when idle.
-	Role string `json:"role"`
+	Session    *SessionView `json:"session"`
+	Controller *User        `json:"controller"`
 }
 
 type SessionView struct {
-	ID         string    `json:"id"`
-	Key        string    `json:"key"`
-	Name       string    `json:"name"`
-	Host       User      `json:"host"`
-	Controller User      `json:"controller"`
-	GuildID    string    `json:"guild_id"`
-	ChannelID  string    `json:"channel_id"`
-	Started    time.Time `json:"started"`
-	Status     string    `json:"status"`
-	Running    bool      `json:"running"`
+	ID      string `json:"id"`
+	Key     string `json:"key"`
+	Name    string `json:"name"`
+	Status  string `json:"status"`
+	Running bool   `json:"running"`
 }
 
-func (m *Manager) View(u *User) View {
+func (m *Manager) View() View {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.viewLocked(u)
-}
-
-func (m *Manager) viewLocked(u *User) View {
-	v := View{Viewers: []User{}}
-	seen := map[string]bool{}
-	for vw := range m.viewers {
-		if !seen[vw.ID] {
-			seen[vw.ID] = true
-			v.Viewers = append(v.Viewers, vw.User)
-		}
+	var v View
+	if m.controller.ID != "" {
+		c := m.controller
+		v.Controller = &c
 	}
-	slices.SortFunc(v.Viewers, func(a, b User) int { return strings.Compare(a.Name, b.Name) })
-	s := m.cur
-	if s == nil {
-		return v
-	}
-	v.Session = &SessionView{
-		ID:         s.ID,
-		Key:        s.Entry.ID,
-		Name:       s.Entry.Name,
-		Host:       s.Host,
-		Controller: s.Controller,
-		GuildID:    s.GuildID,
-		ChannelID:  s.ChannelID,
-		Started:    s.Started,
-		Status:     s.Status,
-		Running:    s.run != nil,
-	}
-	if u != nil {
-		switch {
-		case s.Controller.ID == u.ID:
-			v.Role = "controller"
-		case s.Host.ID == u.ID:
-			v.Role = "host"
-		default:
-			v.Role = "viewer"
-		}
+	if s := m.cur; s != nil {
+		v.Session = &SessionView{ID: s.ID, Key: s.Entry.ID, Name: s.Entry.Name, Status: s.Status, Running: s.run != nil}
 	}
 	return v
-}
-
-func newID() string {
-	b := make([]byte, 4)
-	rand.Read(b)
-	return hex.EncodeToString(b)
 }

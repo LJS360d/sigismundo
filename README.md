@@ -1,14 +1,14 @@
 # Sigismundo
 
-A self-hosted Discord Activity for hosting PC party games (Jackbox and friends) from a server box: it runs the game under Wine on a headless display and streams it, with sound, into a Discord Activity in your voice channel. Whoever hosts controls the game with mouse and keyboard from the Activity; everyone else joins on their phones as usual.
+A self-hosted Discord Activity for hosting PC party games (Jackbox and friends) from a server box: it runs the game under Wine on a headless display and streams it, with sound, into a Discord Activity in your voice channel. Whoever opened the Activity first controls the game with mouse and keyboard from the Activity; everyone else joins on their phones as usual.
 
 Bring your own games: launcher-free copies, mounted into the container with a small manifest.
 
 ## How it works
 
-1. In a voice channel, open Sigismundo from the Activities shelf (rocket button) and pick a game; whoever picks first hosts.
+1. In a voice channel, open Sigismundo from the Activities shelf (rocket button) and pick a game; whoever opened it first is in control (bottom-left of the menu).
 2. The game fills the Activity; the host's mouse and keyboard go straight to it. Players read the room code off the stream and join on jackbox.tv.
-3. Quitting the game, Esc → Stop game, or 10 minutes without anyone watching ends it and brings back the catalog.
+3. Quitting the game, Ctrl+Shift+X → Stop game, or 10 minutes without anyone watching ends it and brings back the catalog.
 
 Two parts, two images: `server/` (API, game pipeline) and `activity/` (the Activity frontend, nginx proxying `/api` to the server).
 

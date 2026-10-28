@@ -32,16 +32,6 @@ const (
 	startGrace = 90 * time.Second
 )
 
-type Spec struct {
-	Entry      catalog.Entry
-	WinePrefix string
-	// Display is the X display number Xvfb takes.
-	Display int
-	// HostAudio uses the PulseAudio/PipeWire server already running (through
-	// pactl) instead of spawning a private pulseaudio.
-	HostAudio bool
-}
-
 type Run struct {
 	Hub   *stream.Hub
 	Input *input.Injector
@@ -49,7 +39,6 @@ type Run struct {
 	Done chan struct{}
 	Err  error
 
-	spec    Spec
 	display string
 	sink    string
 	runtime string
@@ -60,8 +49,8 @@ type Run struct {
 	once    sync.Once
 }
 
-// Start brings the whole pipeline up; status reports progress for viewers.
-func Start(spec Spec, status func(string)) (*Run, error) {
+// Start brings the whole pipeline up for entry; status reports progress for viewers.
+func Start(entry catalog.Entry, status func(string)) (*Run, error) {
 	runtime, err := os.MkdirTemp("", "sigismundo-run-")
 	if err != nil {
 		return nil, err
@@ -69,13 +58,12 @@ func Start(spec Spec, status func(string)) (*Run, error) {
 	r := &Run{
 		Hub:     stream.NewHub(),
 		Done:    make(chan struct{}),
-		spec:    spec,
-		display: fmt.Sprintf(":%d", spec.Display),
+		display: fmt.Sprintf(":%d", config.DisplayNum),
 		sink:    "game",
 		runtime: runtime,
 	}
 	pulse := filepath.Join(runtime, "pulse.sock")
-	if spec.HostAudio {
+	if config.HostAudio {
 		r.sink = "sigismundo_" + strconv.Itoa(os.Getpid())
 	}
 	overrides := "winemenubuilder.exe=d;mscoree=;mshtml="
@@ -87,13 +75,13 @@ func Start(spec Spec, status func(string)) (*Run, error) {
 	r.env = append(os.Environ(),
 		"DISPLAY="+r.display,
 		"PULSE_SINK="+r.sink,
-		"WINEPREFIX="+spec.WinePrefix,
+		"WINEPREFIX="+config.WinePrefix,
 		"WINEDLLOVERRIDES="+overrides,
 	)
 	if os.Getenv("WINEDEBUG") == "" {
 		r.env = append(r.env, "WINEDEBUG=-all")
 	}
-	if !spec.HostAudio {
+	if !config.HostAudio {
 		r.env = append(r.env, "XDG_RUNTIME_DIR="+runtime, "PULSE_SERVER=unix:"+pulse)
 	}
 	ok := false
@@ -104,18 +92,18 @@ func Start(spec Spec, status func(string)) (*Run, error) {
 	}()
 
 	status("Starting display")
-	os.Remove(fmt.Sprintf("/tmp/.X%d-lock", spec.Display))
+	os.Remove(fmt.Sprintf("/tmp/.X%d-lock", config.DisplayNum))
 	if _, err := r.spawn("xvfb", "", nil, "Xvfb", r.display,
 		"-screen", "0", fmt.Sprintf("%dx%dx24", config.Width, config.Height),
 		"-nolisten", "tcp", "-noreset"); err != nil {
 		return nil, err
 	}
-	if err := waitPath(fmt.Sprintf("/tmp/.X11-unix/X%d", spec.Display), 10*time.Second); err != nil {
+	if err := waitPath(fmt.Sprintf("/tmp/.X11-unix/X%d", config.DisplayNum), 10*time.Second); err != nil {
 		return nil, fmt.Errorf("xvfb: %w", err)
 	}
 
 	status("Starting audio")
-	if spec.HostAudio {
+	if config.HostAudio {
 		if err := r.hostSink(); err != nil {
 			return nil, err
 		}
@@ -132,9 +120,9 @@ func Start(spec Spec, status func(string)) (*Run, error) {
 		}
 	}
 
-	if _, err := os.Stat(filepath.Join(spec.WinePrefix, "system.reg")); err != nil {
+	if _, err := os.Stat(filepath.Join(config.WinePrefix, "system.reg")); err != nil {
 		status("Preparing Wine prefix (first run, can take a minute)")
-		if err := os.MkdirAll(spec.WinePrefix, 0o755); err != nil {
+		if err := os.MkdirAll(config.WinePrefix, 0o755); err != nil {
 			return nil, err
 		}
 		boot, err := r.spawn("wineboot", "", nil, "wineboot", "--init")
@@ -148,7 +136,7 @@ func Start(spec Spec, status func(string)) (*Run, error) {
 		r.wineserver("-w")
 	}
 	if dxvk {
-		if err := installDXVK(spec.WinePrefix); err != nil {
+		if err := installDXVK(config.WinePrefix); err != nil {
 			return nil, fmt.Errorf("dxvk: %w", err)
 		}
 	}
@@ -158,9 +146,9 @@ func Start(spec Spec, status func(string)) (*Run, error) {
 		return nil, fmt.Errorf("input: %w", err)
 	}
 
-	status("Launching " + spec.Entry.Name)
-	exe := spec.Entry.Exe
-	args := append([]string{"explorer", fmt.Sprintf("/desktop=sigismundo,%dx%d", config.Width, config.Height), exe}, spec.Entry.Args...)
+	status("Launching " + entry.Name)
+	exe := entry.Exe
+	args := append([]string{"explorer", fmt.Sprintf("/desktop=sigismundo,%dx%d", config.Width, config.Height), exe}, entry.Args...)
 	if _, err := r.spawn("wine", filepath.Dir(exe), nil, "wine", args...); err != nil {
 		return nil, err
 	}

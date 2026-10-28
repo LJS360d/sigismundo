@@ -13,14 +13,11 @@ import (
 	"sigismundo/internal/session"
 )
 
-// LDFLAGS
-var (
-	Version string
-)
+// set through -ldflags
+var Version string
 
 func main() {
-	config.Version = Version
-	logger.Infof("Version: %s", config.Version)
+	logger.Infof("Version: %s", Version)
 
 	// local: no Discord, anyone reaching the API can get a token for any user
 	// (open the Activity at /?user=1&name=me).

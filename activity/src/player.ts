@@ -46,20 +46,6 @@ export class Player {
     await this.ctx.resume();
   }
 
-  setVolume(v: number) {
-    this.gain.gain.value = v;
-  }
-
-  // Called when the stream restarts (new session): timestamps start over.
-  reset() {
-    this.base = undefined;
-    this.needKey = true;
-    for (const d of this.queue) d.frame.close();
-    this.queue = [];
-    if (this.video?.state === "configured") this.video.reset();
-    this.codec = "";
-  }
-
   push(buf: ArrayBuffer) {
     const view = new DataView(buf);
     const kind = view.getUint8(0);
@@ -180,7 +166,7 @@ export class Player {
 
   destroy() {
     cancelAnimationFrame(this.raf);
-    this.reset();
+    for (const d of this.queue) d.frame.close();
     this.video?.close();
     this.audio?.close();
     this.fallback?.free();

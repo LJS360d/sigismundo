@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"sigismundo/internal/config"
 	"sigismundo/internal/input"
 	"sigismundo/internal/logger"
 	"sigismundo/internal/session"
@@ -27,20 +28,19 @@ var upgrader = websocket.Upgrader{
 
 // clientMsg is every message the Activity sends.
 type clientMsg struct {
-	T         string  `json:"t"`
-	GuildID   string  `json:"guild_id"`
-	ChannelID string  `json:"channel_id"`
-	Key       string  `json:"key"`
-	Code      string  `json:"code"`
-	X         float64 `json:"x"`
-	Y         float64 `json:"y"`
-	B         byte    `json:"b"`
-	D         bool    `json:"d"`
+	T    string  `json:"t"`
+	Key  string  `json:"key"`
+	Code string  `json:"code"`
+	X    float64 `json:"x"`
+	Y    float64 `json:"y"`
+	B    byte    `json:"b"`
+	D    bool    `json:"d"`
 }
 
 type stateMsg struct {
-	T  string       `json:"t"`
-	Me session.User `json:"me"`
+	T     string       `json:"t"`
+	Me    session.User `json:"me"`
+	Owner bool         `json:"owner"`
 	session.View
 }
 
@@ -68,6 +68,7 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	go c.writeLoop()
+	c.srv.sessions.Attach(c.viewer)
 	c.readLoop()
 }
 
@@ -85,20 +86,10 @@ func (c *wsClient) readLoop() {
 		close(c.out)
 	}()
 	c.conn.SetReadLimit(4096)
-	attached := false
 	for {
 		var m clientMsg
 		if err := c.conn.ReadJSON(&m); err != nil {
 			return
-		}
-		if !attached {
-			if m.T != "hello" {
-				return
-			}
-			c.viewer.GuildID, c.viewer.ChannelID = m.GuildID, m.ChannelID
-			c.srv.sessions.Attach(c.viewer)
-			attached = true
-			continue
 		}
 		if err := c.handle(m); err != nil {
 			c.send(map[string]string{"t": "error", "message": err.Error()})
@@ -122,10 +113,11 @@ func (c *wsClient) handle(m clientMsg) error {
 		if !ok {
 			return errors.New("unknown game")
 		}
-		_, err := mgr.Start(*e, c.viewer.User, c.viewer.GuildID, c.viewer.ChannelID)
-		return err
+		return mgr.Start(*e, c.viewer.User)
 	case "stop":
 		return mgr.Stop(uid)
+	case "seize":
+		return mgr.Seize(c.viewer.User)
 	case "m":
 		return quiet(mgr.Input(uid, func(in *input.Injector) error { return in.MoveRel(clamp01(m.X), clamp01(m.Y)) }))
 	case "b":
@@ -189,7 +181,7 @@ func (c *wsClient) writeLoop() {
 			}
 		case <-c.notify:
 			me := c.viewer.User
-			if !writeJSON(stateMsg{T: "state", Me: me, View: c.srv.sessions.View(&me)}) {
+			if !writeJSON(stateMsg{T: "state", Me: me, Owner: config.IsOwner(me.ID), View: c.srv.sessions.View()}) {
 				return
 			}
 			if h := c.srv.sessions.Hub(); h != hub {
