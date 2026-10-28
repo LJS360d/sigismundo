@@ -130,6 +130,12 @@ func vulkanEnv(device string, render bool) []string {
 	// back to lavapipe. The sw WSI path renders on the GPU and copies
 	// finished frames to the X server instead.
 	set("MESA_VK_WSI_DEBUG", "sw")
+	// That path never completes present ids (Mesa only does on DRI3), yet
+	// hardware drivers still offer VK_KHR_present_wait, so DXVK's wait on
+	// vsync'd (FIFO) presents never returns and the game freezes. Sync
+	// interval 0 keeps DXVK on immediate presents, which it doesn't wait on;
+	// DXVK_FRAME_RATE still paces frames.
+	set("DXVK_CONFIG", "dxgi.syncInterval = 0")
 	// Pin the device on multi-GPU hosts (Mesa's device-select layer).
 	vendor, id := sysfs(device, "device/vendor"), sysfs(device, "device/device")
 	if vendor != "" && id != "" {
