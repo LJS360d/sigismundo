@@ -1,0 +1,7 @@
+/target
+/games/
+
+.env*
+!.env.development
+!.env.example
+logs/

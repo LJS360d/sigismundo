@@ -1,0 +1,24 @@
+# Copy to <GAMES_DIR>/catalog.yaml and adjust. Entries whose exe is missing
+# are skipped. Format: .knowledge/defined/catalog.md
+- id: jpp7
+  name: The Jackbox Party Pack 7
+  exe: jpp7/The Jackbox Party Pack 7.exe
+  nav_delay: 20s
+  games:
+    - { id: quiplash3, name: Quiplash 3 }
+    - { id: devils, name: The Devils and the Details }
+    - { id: champdup, name: Champ'd Up }
+    - { id: talkingpoints, name: Talking Points }
+    - { id: blatherround, name: Blather 'Round }
+
+- id: drawful2
+  name: Drawful 2
+  exe: drawful2/Drawful 2.exe
+
+# Smoke test without any game: Wine's own notepad (Debian/the image, then Arch).
+- id: notepad
+  name: Notepad (pipeline test)
+  exe: /usr/lib/x86_64-linux-gnu/wine/x86_64-windows/notepad.exe
+- id: notepad-arch
+  name: Notepad (pipeline test)
+  exe: /usr/lib/wine/x86_64-windows/notepad.exe

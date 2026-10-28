@@ -1,0 +1,35 @@
+# Dev/self-host example: builds both images from source.
+# Games and catalog.yaml go in ./games (see .knowledge/defined/catalog.md).
+# Only the activity is published; it proxies /api to the server. Discord must
+# reach it over public HTTPS: put a reverse proxy in front and set that URL as
+# the Activity's root URL mapping.
+name: sigismundo
+
+services:
+  activity:
+    build:
+      context: ./activity
+    ports:
+      - "8080:80"
+    environment:
+      API_URL: http://sigismundo:8080
+    depends_on:
+      - sigismundo
+    restart: unless-stopped
+
+  sigismundo:
+    build:
+      context: ./server
+    env_file: ./server/.env
+    # Beats empty keys in the env file, which would clobber the image ENV.
+    environment:
+      SERVER_ADDRESS: 0.0.0.0:8080
+      DATA_DIR: /data
+    # SIGISMUNDO_MODE=local: no Discord, dev auth
+    command: ["${SIGISMUNDO_MODE:-serve}"]
+    volumes:
+      - ./server/data:/data
+      - ./games:/games:ro
+    # Wine and Xvfb use shared memory; the 64MB default is too small.
+    shm_size: 1g
+    restart: unless-stopped

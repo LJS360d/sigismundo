@@ -1,0 +1,15 @@
+# env file
+.env
+
+# temp files
+*.log
+tmp
+.tmp
+
+# binary
+bin/
+
+# data
+/data/
+*.db
+*.db-*
