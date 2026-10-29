@@ -51,7 +51,7 @@ There is no Discord bot: nothing joins voice and there are no slash commands. Di
 
 ### Sessions and control
 
-One game runs at a time, shared by everyone who opens the Activity, from any voice channel or server. The first viewer of an empty Activity becomes the controller. Only the controller's input reaches the game, and only the controller or an owner (`OWNER_IDS`) can start or stop games. Owners can also take control at any time. If the controller is gone from the Activity for a minute, control passes to whoever has been watching longest. A session ends when the game exits, when someone stops it (Ctrl+Shift+X), when part of the pipeline dies, or after `IDLE_TIMEOUT` (10 minutes) with no viewers.
+One game runs at a time, shared by everyone who opens the Activity, from any voice channel or server. The first viewer of an empty Activity becomes the controller. Only the controller's input reaches the game, and only the controller or an owner (`OWNER_IDS`) can start or stop games. Owners can also take control at any time. If the controller leaves the Activity, everyone sees a countdown ring on their avatar, and after `CONTROL_GRACE` (15 seconds) control passes to whoever has been watching longest. A session ends when the game exits, when someone stops it (Ctrl+Shift+X), when part of the pipeline dies, or after `IDLE_TIMEOUT` (10 minutes) with no viewers.
 
 ### The pipeline, per session
 

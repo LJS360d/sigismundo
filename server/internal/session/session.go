@@ -23,10 +23,6 @@ var (
 	ErrNotOwner  = errors.New("only owners can seize control")
 )
 
-// controllerGrace is how long the controller may be away from the Activity
-// before control passes to the longest-present viewer.
-const controllerGrace = time.Minute
-
 type User struct {
 	ID     string `json:"id"`
 	Name   string `json:"name"`
@@ -217,7 +213,7 @@ func (m *Manager) Attach(v *Viewer) {
 	m.mu.Lock()
 	v.joined = time.Now()
 	m.viewers[v] = struct{}{}
-	if m.controller.ID == "" {
+	if m.controller.ID == "" || m.controller.ID == v.ID {
 		m.setControllerLocked(v.User)
 	}
 	m.mu.Unlock()
@@ -231,6 +227,9 @@ func (m *Manager) Detach(v *Viewer) {
 	m.lastSeen = time.Now()
 	if len(m.viewers) == 0 {
 		m.controller = User{}
+		m.awaySince = time.Time{}
+	} else if m.awaySince.IsZero() && !m.presentLocked(m.controller.ID) {
+		m.awaySince = m.lastSeen
 	}
 	m.mu.Unlock()
 	m.broadcast()
@@ -238,7 +237,7 @@ func (m *Manager) Detach(v *Viewer) {
 
 // Run enforces the idle timeout and the controller grace period until stop closes.
 func (m *Manager) Run(stop <-chan struct{}) {
-	t := time.NewTicker(10 * time.Second)
+	t := time.NewTicker(time.Second)
 	defer t.Stop()
 	for {
 		select {
@@ -268,7 +267,7 @@ func (m *Manager) tick(now time.Time) {
 		m.awaySince = time.Time{}
 	case m.awaySince.IsZero():
 		m.awaySince = now
-	case now.Sub(m.awaySince) > controllerGrace:
+	case now.Sub(m.awaySince) >= config.ControlGrace:
 		m.setControllerLocked(m.oldestViewerLocked())
 		changed = true
 	}
@@ -313,6 +312,14 @@ func (m *Manager) broadcast() {
 type View struct {
 	Session    *SessionView `json:"session"`
 	Controller *User        `json:"controller"`
+	// Away is set while the controller has left and control is about to pass on.
+	Away *Away `json:"away"`
+}
+
+// Away times the handover, in milliseconds: In left out of Grace.
+type Away struct {
+	In    int64 `json:"in"`
+	Grace int64 `json:"grace"`
 }
 
 type SessionView struct {
@@ -330,6 +337,10 @@ func (m *Manager) View() View {
 	if m.controller.ID != "" {
 		c := m.controller
 		v.Controller = &c
+	}
+	if !m.awaySince.IsZero() {
+		left := max(config.ControlGrace-time.Since(m.awaySince), 0)
+		v.Away = &Away{In: left.Milliseconds(), Grace: config.ControlGrace.Milliseconds()}
 	}
 	if s := m.cur; s != nil {
 		v.Session = &SessionView{ID: s.ID, Key: s.Entry.ID, Name: s.Entry.Name, Status: s.Status, Running: s.run != nil}

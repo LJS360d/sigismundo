@@ -4,7 +4,9 @@ import { sfx } from "./sfx";
 export type Entry = { id: string; name: string; description?: string; image?: string };
 export type SessionView = { id: string; key: string; name: string; status: string; running: boolean };
 export type User = { id: string; name: string; avatar?: string };
-export type State = { session: SessionView | null; controller: User | null; me: User; owner: boolean };
+// controller left; control passes on in `in` of `grace` ms
+export type Away = { in: number; grace: number };
+export type State = { session: SessionView | null; controller: User | null; away: Away | null; me: User; owner: boolean };
 
 export const catalog = signal<Entry[]>([]);
 // undefined until the server's first state message

@@ -92,17 +92,28 @@ func TestControllerAwayAndReset(t *testing.T) {
 	a := attach(m, alice)
 	attach(m, bob)
 	attach(m, eve)
-	m.Detach(a)
-
 	now := time.Now()
-	m.tick(now)
-	m.tick(now.Add(controllerGrace / 2))
+	m.Detach(a)
+	if m.View().Away == nil {
+		t.Fatal("no countdown after controller left")
+	}
+	m.tick(now.Add(config.ControlGrace / 2))
 	if c := controller(m); c != alice.ID {
 		t.Fatalf("transferred within grace to %s", c)
 	}
-	m.tick(now.Add(2 * controllerGrace))
+	m.tick(now.Add(2 * config.ControlGrace))
 	if c := controller(m); c != bob.ID {
 		t.Fatalf("controller %s, want longest-present bob", c)
+	}
+
+	m1, _ := setup(t)
+	a = attach(m1, alice)
+	attach(m1, bob)
+	m1.Detach(a)
+	attach(m1, alice)
+	m1.tick(now.Add(2 * config.ControlGrace))
+	if c := controller(m1); c != alice.ID || m1.View().Away != nil {
+		t.Fatalf("controller %s after returning in time, want alice", c)
 	}
 
 	m2, _ := setup(t)

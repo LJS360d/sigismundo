@@ -3,6 +3,7 @@ import { useSignal } from "@preact/signals";
 import { Player } from "../player";
 import { canLaunch, catalog, controlling, isMenuKey, MENU_KEY, menu, send, setMedia, type SessionView } from "../store";
 import { vtName } from "./Catalog";
+import { ControllerBadge } from "./Control";
 
 // DOM button 0/1/2 (left/middle/right) to X button 1/2/3.
 const button = (ev: PointerEvent) => (ev.button === 1 ? 2 : ev.button === 2 ? 3 : 1);
@@ -117,6 +118,7 @@ export function Stage({ session }: { session: SessionView }) {
       ) : (
         audioBlocked.value && <div class="pointer-events-none absolute inset-x-0 bottom-4 mx-auto w-fit rounded-lg bg-black/70 px-5 py-3">Click for sound</div>
       )}
+      <ControllerBadge awayOnly />
       {menu.value && (
         <div class="absolute inset-0 grid place-items-center bg-black/55 p-4 backdrop-blur-sm" onClick={(e) => e.target === e.currentTarget && (menu.value = false)}>
           <div class="w-full max-w-90 rounded-xl border border-line bg-panel p-5 shadow-2xl" role="dialog" aria-label="Game menu">
