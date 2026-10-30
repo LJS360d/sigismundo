@@ -55,10 +55,15 @@ function announceControl(prev: State | undefined, next: State) {
   announceTimer = setTimeout(() => (announce.value = null), 3500);
 }
 
+// While the Activity is off screen the server sends no video, saving its upload.
+const sendVisibility = () => send({ t: "vis", d: !document.hidden });
+document.addEventListener("visibilitychange", sendVisibility);
+
 export function connect(token: string) {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${proto}://${location.host}/api/ws?token=${encodeURIComponent(token)}`);
   ws.binaryType = "arraybuffer";
+  ws.onopen = sendVisibility;
   ws.onmessage = (ev) => {
     if (ev.data instanceof ArrayBuffer) {
       onMedia?.(ev.data);

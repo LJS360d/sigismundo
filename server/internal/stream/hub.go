@@ -36,12 +36,37 @@ func (f Frame) Key() bool  { return f[1]&FlagKey != 0 }
 type Sub struct {
 	C         chan Frame
 	needKey   bool
+	paused    bool
 	hub       *Hub
 	closeOnce sync.Once
 }
 
 func (s *Sub) Close() {
 	s.closeOnce.Do(func() { s.hub.remove(s) })
+}
+
+// Pause stops video to the subscriber while audio keeps flowing; resuming
+// replays the current GOP so the picture comes back at once.
+func (s *Sub) Pause(p bool) {
+	h := s.hub
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if _, ok := h.subs[s]; !ok || s.paused == p {
+		return
+	}
+	s.paused = p
+	if p {
+		return
+	}
+	s.needKey = len(h.gop) == 0
+	for _, f := range h.gop {
+		select {
+		case s.C <- f:
+		default:
+			s.needKey = true
+			return
+		}
+	}
 }
 
 type Hub struct {
@@ -103,6 +128,9 @@ func (h *Hub) Publish(f Frame) {
 		}
 	}
 	for s := range h.subs {
+		if f.Kind() == KindVideo && s.paused {
+			continue
+		}
 		if f.Kind() == KindVideo && s.needKey {
 			if !f.Key() {
 				continue

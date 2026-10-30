@@ -90,3 +90,27 @@ func TestHubGOPReplayAndKeyWait(t *testing.T) {
 		t.Fatal("closed")
 	}
 }
+
+func TestHubPause(t *testing.T) {
+	h := NewHub()
+	s := h.Subscribe()
+	s.Pause(true)
+	h.Publish(NewFrame(KindVideo, FlagKey, 0, []byte{1}))
+	h.Publish(NewFrame(KindAudio, 0, 0, []byte{9}))
+	h.Publish(NewFrame(KindVideo, 0, 0, []byte{2}))
+	if f := <-s.C; f.Kind() != KindAudio {
+		t.Fatal("paused sub should only get audio")
+	}
+	s.Pause(false)
+	if f := <-s.C; f[10] != 1 || !f.Key() {
+		t.Fatal("resume should replay the GOP from its keyframe")
+	}
+	if f := <-s.C; f[10] != 2 {
+		t.Fatal("resume should replay the whole GOP")
+	}
+	h.Publish(NewFrame(KindVideo, 0, 0, []byte{3}))
+	if f := <-s.C; f[10] != 3 {
+		t.Fatal("resumed sub should get live video")
+	}
+	h.Close()
+}

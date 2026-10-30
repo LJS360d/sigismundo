@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"sigismundo/internal/config"
@@ -58,6 +59,7 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 		srv:    s,
 		conn:   conn,
 		notify: make(chan struct{}, 1),
+		vis:    make(chan struct{}, 1),
 		out:    make(chan any, 16),
 		viewer: &session.Viewer{User: user},
 	}
@@ -78,6 +80,10 @@ type wsClient struct {
 	notify chan struct{}
 	out    chan any
 	viewer *session.Viewer
+	// hidden: the Activity isn't on screen, so it gets no video; vis
+	// wakes writeLoop, which owns the subscription, to apply it.
+	hidden atomic.Bool
+	vis    chan struct{}
 }
 
 func (c *wsClient) readLoop() {
@@ -118,6 +124,13 @@ func (c *wsClient) handle(m clientMsg) error {
 		return mgr.Stop(uid)
 	case "seize":
 		return mgr.Seize(c.viewer.User)
+	case "vis":
+		c.hidden.Store(!m.D)
+		select {
+		case c.vis <- struct{}{}:
+		default:
+		}
+		return nil
 	case "m":
 		return quiet(mgr.Input(uid, func(in *input.Injector) error { return in.MoveRel(clamp01(m.X), clamp01(m.Y)) }))
 	case "b":
@@ -192,7 +205,12 @@ func (c *wsClient) writeLoop() {
 				hub = h
 				if h != nil {
 					sub = h.Subscribe()
+					sub.Pause(c.hidden.Load())
 				}
+			}
+		case <-c.vis:
+			if sub != nil {
+				sub.Pause(c.hidden.Load())
 			}
 		case f, ok := <-frames:
 			if !ok {

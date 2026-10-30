@@ -149,27 +149,35 @@ type encoder struct {
 	variants [][]string // tried in order, the first that encodes wins
 }
 
+// Every encoder runs quality-targeted VBR capped at STREAM_VIDEO_KBPS: each
+// viewer gets its own copy of the stream, and CBR would spend the full rate
+// on static scenes too. High profile for CABAC; no B-frames, they add latency.
 func encoders(device string) []encoder {
 	kbps := strconv.Itoa(config.VideoBitrate) + "k"
-	rate := []string{"-b:v", kbps, "-maxrate", kbps, "-bufsize", strconv.Itoa(config.VideoBitrate/2) + "k",
-		"-g", strconv.Itoa(config.FPS * 2), "-bf", "0"}
+	rate := []string{"-maxrate", kbps, "-bufsize", strconv.Itoa(config.VideoBitrate/2) + "k",
+		"-g", strconv.Itoa(config.FPS * 2), "-bf", "0", "-profile:v", "high"}
 	with := func(args ...string) []string { return append(args, rate...) }
 	var vaapi [][]string
 	// Plain, then low-power (all some Intel drivers offer); color conversion
-	// on the GPU, then on the CPU. async_depth 1 keeps one frame in flight
-	// instead of two, a frame less of latency.
+	// on the GPU, then on the CPU; QVBR, then VBR where the driver lacks it.
+	// async_depth 1 keeps one frame in flight instead of two, a frame less
+	// of latency.
 	for _, lp := range []string{"0", "1"} {
 		for _, vf := range []string{"hwupload,scale_vaapi=format=nv12", "format=nv12,hwupload"} {
-			vaapi = append(vaapi, with("-vaapi_device", device, "-vf", vf, "-c:v", "h264_vaapi", "-low_power", lp,
-				"-async_depth", "1", "-profile:v", "constrained_baseline", "-rc_mode", "CBR", "-aud", "1"))
+			for _, rc := range [][]string{{"-rc_mode", "QVBR", "-global_quality", "25", "-b:v", kbps},
+				{"-rc_mode", "VBR", "-b:v", strconv.Itoa(config.VideoBitrate*3/5) + "k"}} {
+				vaapi = append(vaapi, with(append([]string{"-vaapi_device", device, "-vf", vf, "-c:v", "h264_vaapi",
+					"-low_power", lp, "-async_depth", "1", "-aud", "1"}, rc...)...))
+			}
 		}
 	}
 	return []encoder{
 		{"h264_nvenc", [][]string{with("-c:v", "h264_nvenc", "-preset", "p1", "-tune", "ull", "-zerolatency", "1",
-			"-profile:v", "baseline", "-rc", "cbr", "-aud", "1")}},
+			"-rc", "vbr", "-cq", "28", "-b:v", "0", "-aud", "1")}},
 		{"h264_vaapi", vaapi},
+		// ultrafast turns CABAC off; it costs little CPU and saves ~10%.
 		{"libx264", [][]string{with("-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-			"-profile:v", "baseline", "-pix_fmt", "yuv420p", "-x264-params", "repeat-headers=1",
+			"-crf", "26", "-pix_fmt", "yuv420p", "-x264-params", "repeat-headers=1:cabac=1",
 			"-bsf:v", "h264_metadata=aud=insert")}},
 	}
 }
