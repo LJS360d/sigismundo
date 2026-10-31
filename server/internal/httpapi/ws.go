@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"net"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -17,7 +18,12 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-const writeWait = 10 * time.Second
+const (
+	writeWait = 10 * time.Second
+	// sendBuffer caps the kernel's queue for the socket: anything queued there
+	// is out of reach of stream.MaxLag.
+	sendBuffer = 32 << 10
+)
 
 // Requests reach us through Discord's proxy (or same-origin in a browser),
 // and the token is the credential, so Origin isn't checked.
@@ -42,6 +48,8 @@ type stateMsg struct {
 	T     string       `json:"t"`
 	Me    session.User `json:"me"`
 	Owner bool         `json:"owner"`
+	// Relay is a token for the relay's /view, set when one is configured.
+	Relay string `json:"relay,omitempty"`
 	session.View
 }
 
@@ -55,11 +63,14 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+	if tc, ok := conn.NetConn().(*net.TCPConn); ok {
+		tc.SetWriteBuffer(sendBuffer)
+	}
 	c := &wsClient{
 		srv:    s,
 		conn:   conn,
 		notify: make(chan struct{}, 1),
-		vis:    make(chan struct{}, 1),
+		media:  make(chan struct{}, 1),
 		out:    make(chan any, 16),
 		viewer: &session.Viewer{User: user},
 	}
@@ -80,10 +91,12 @@ type wsClient struct {
 	notify chan struct{}
 	out    chan any
 	viewer *session.Viewer
-	// hidden: the Activity isn't on screen, so it gets no video; vis
-	// wakes writeLoop, which owns the subscription, to apply it.
-	hidden atomic.Bool
-	vis    chan struct{}
+	// hidden: the Activity isn't on screen, so it gets no video. relayed: it
+	// gets the stream from the relay, so none from here. media wakes
+	// writeLoop, which owns the subscription, to apply them.
+	hidden  atomic.Bool
+	relayed atomic.Bool
+	media   chan struct{}
 }
 
 func (c *wsClient) readLoop() {
@@ -124,10 +137,14 @@ func (c *wsClient) handle(m clientMsg) error {
 		return mgr.Stop(uid)
 	case "seize":
 		return mgr.Seize(c.viewer.User)
-	case "vis":
-		c.hidden.Store(!m.D)
+	case "vis", "relay":
+		if m.T == "vis" {
+			c.hidden.Store(!m.D)
+		} else {
+			c.relayed.Store(m.D)
+		}
 		select {
-		case c.vis <- struct{}{}:
+		case c.media <- struct{}{}:
 		default:
 		}
 		return nil
@@ -166,6 +183,7 @@ func clamp01(v float64) float64 {
 func (c *wsClient) writeLoop() {
 	var sub *stream.Sub
 	var hub *stream.Hub
+	var pacer stream.Pacer
 	defer func() {
 		if sub != nil {
 			sub.Close()
@@ -179,6 +197,27 @@ func (c *wsClient) writeLoop() {
 	writeJSON := func(v any) bool {
 		b, _ := json.Marshal(v)
 		return write(websocket.TextMessage, b)
+	}
+	// resubscribe follows the session's hub, unless the relay streams instead.
+	resubscribe := func() {
+		h := c.srv.sessions.Hub()
+		if c.relayed.Load() {
+			h = nil
+		}
+		if h != hub {
+			if sub != nil {
+				sub.Close()
+				sub = nil
+			}
+			hub = h
+			pacer.Reset()
+			if h != nil {
+				sub = h.Subscribe()
+			}
+		}
+		if sub != nil {
+			sub.Pause(c.hidden.Load())
+		}
 	}
 	ping := time.NewTicker(30 * time.Second)
 	defer ping.Stop()
@@ -194,33 +233,32 @@ func (c *wsClient) writeLoop() {
 			}
 		case <-c.notify:
 			me := c.viewer.User
-			if !writeJSON(stateMsg{T: "state", Me: me, Owner: config.IsOwner(me.ID), View: c.srv.sessions.View()}) {
+			msg := stateMsg{T: "state", Me: me, Owner: config.IsOwner(me.ID), View: c.srv.sessions.View()}
+			if config.RelayURL != "" {
+				msg.Relay = relayToken()
+			}
+			if !writeJSON(msg) {
 				return
 			}
-			if h := c.srv.sessions.Hub(); h != hub {
-				if sub != nil {
-					sub.Close()
-					sub = nil
-				}
-				hub = h
-				if h != nil {
-					sub = h.Subscribe()
-					sub.Pause(c.hidden.Load())
-				}
-			}
-		case <-c.vis:
-			if sub != nil {
-				sub.Pause(c.hidden.Load())
-			}
+			resubscribe()
+		case <-c.media:
+			resubscribe()
 		case f, ok := <-frames:
 			if !ok {
 				sub, hub = nil, nil
+				continue
+			}
+			if !pacer.Keep(f, hub.Since()) {
 				continue
 			}
 			if !write(websocket.BinaryMessage, f) {
 				return
 			}
 		case <-ping.C:
+			if pacer.Dropped > 0 {
+				logger.Debugf("ws %s: dropped %d late frames in 30s, the uplink can't keep up", c.viewer.ID, pacer.Dropped)
+				pacer.Dropped = 0
+			}
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if c.conn.WriteMessage(websocket.PingMessage, nil) != nil {
 				return

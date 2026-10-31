@@ -28,12 +28,20 @@ type claims struct {
 func signToken(u session.User) string {
 	b, _ := json.Marshal(claims{User: u, Exp: time.Now().Add(tokenTTL).Unix()})
 	body := base64.RawURLEncoding.EncodeToString(b)
-	return body + "." + sign(body)
+	return body + "." + sign(config.SessionSecret, body)
+}
+
+// relayToken lets a viewer read the stream from the relay (relay/src), which
+// verifies it with the RELAY_SECRET it shares with this server.
+func relayToken() string {
+	b, _ := json.Marshal(map[string]int64{"exp": time.Now().Add(tokenTTL).Unix()})
+	body := base64.RawURLEncoding.EncodeToString(b)
+	return body + "." + sign(config.RelaySecret, body)
 }
 
 func verifyToken(tok string) (session.User, error) {
 	body, sig, ok := strings.Cut(tok, ".")
-	if !ok || !hmac.Equal([]byte(sig), []byte(sign(body))) {
+	if !ok || !hmac.Equal([]byte(sig), []byte(sign(config.SessionSecret, body))) {
 		return session.User{}, errors.New("bad token")
 	}
 	b, err := base64.RawURLEncoding.DecodeString(body)
@@ -50,8 +58,8 @@ func verifyToken(tok string) (session.User, error) {
 	return c.User, nil
 }
 
-func sign(body string) string {
-	mac := hmac.New(sha256.New, config.SessionSecret)
+func sign(key []byte, body string) string {
+	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte(body))
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }

@@ -1,0 +1,15 @@
+# Deploy: pnpm install && pnpm wrangler secret put RELAY_SECRET && pnpm run deploy
+# Works on the Workers Free plan, which bills nothing: past its daily limits
+# requests fail until 00:00 UTC and viewers fall back to the direct stream.
+name = "sigismundo-relay"
+main = "src/index.ts"
+compatibility_date = "2025-09-01"
+
+[[durable_objects.bindings]]
+name = "ROOM"
+class_name = "Room"
+
+# SQLite-backed: the kind of Durable Object the free plan includes.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]

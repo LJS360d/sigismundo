@@ -6,7 +6,15 @@ export type SessionView = { id: string; key: string; name: string; status: strin
 export type User = { id: string; name: string; avatar?: string };
 // controller left; control passes on in `in` of `grace` ms
 export type Away = { in: number; grace: number };
-export type State = { session: SessionView | null; controller: User | null; away: Away | null; me: User; owner: boolean };
+export type State = {
+  session: SessionView | null;
+  controller: User | null;
+  away: Away | null;
+  me: User;
+  owner: boolean;
+  // token for the relay, when the server publishes to one
+  relay?: string;
+};
 
 export const catalog = signal<Entry[]>([]);
 // undefined until the server's first state message
@@ -28,9 +36,52 @@ export let onMedia: ((buf: ArrayBuffer) => void) | undefined;
 export const setMedia = (fn?: (buf: ArrayBuffer) => void) => (onMedia = fn);
 
 let ws: WebSocket | undefined;
+const proto = location.protocol === "https:" ? "wss" : "ws";
 
 export function send(msg: Record<string, unknown>) {
   if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+}
+
+// The relay (relay/, reached through the /relay URL mapping) carries the
+// stream when the server publishes to one, so a single copy leaves the server
+// however many watch. Until it delivers, and whenever it drops, the server's
+// own WebSocket streams instead.
+let relay: WebSocket | undefined;
+let relayToken = "";
+let relayLive = false;
+const RELAY_RETRY = 30_000;
+
+function openRelay() {
+  if (relay || !relayToken) return;
+  const r = (relay = new WebSocket(`${proto}://${location.host}/relay/view?token=${encodeURIComponent(relayToken)}`));
+  r.binaryType = "arraybuffer";
+  r.onopen = sendVisibility;
+  r.onmessage = (ev) => {
+    if (!(ev.data instanceof ArrayBuffer)) return;
+    if (!relayLive) {
+      relayLive = true;
+      send({ t: "relay", d: true });
+    }
+    unbundle(ev.data);
+  };
+  r.onclose = () => {
+    relay = undefined;
+    if (relayLive) {
+      relayLive = false;
+      send({ t: "relay", d: false });
+    }
+    setTimeout(openRelay, RELAY_RETRY);
+  };
+}
+
+// A relay message bundles frames, each prefixed by its length as u32 BE.
+function unbundle(buf: ArrayBuffer) {
+  const view = new DataView(buf);
+  for (let off = 0; off + 4 <= buf.byteLength; ) {
+    const n = view.getUint32(off);
+    onMedia?.(buf.slice(off + 4, off + 4 + n));
+    off += 4 + n;
+  }
 }
 
 const isController = () => !!state.value && state.value.controller?.id === state.value.me.id;
@@ -55,22 +106,31 @@ function announceControl(prev: State | undefined, next: State) {
   announceTimer = setTimeout(() => (announce.value = null), 3500);
 }
 
-// While the Activity is off screen the server sends no video, saving its upload.
-const sendVisibility = () => send({ t: "vis", d: !document.hidden });
+// While the Activity is off screen it gets no video, saving the upload.
+function sendVisibility() {
+  const msg = JSON.stringify({ t: "vis", d: !document.hidden });
+  for (const s of [ws, relay]) if (s?.readyState === WebSocket.OPEN) s.send(msg);
+}
 document.addEventListener("visibilitychange", sendVisibility);
 
 export function connect(token: string) {
-  const proto = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${proto}://${location.host}/api/ws?token=${encodeURIComponent(token)}`);
   ws.binaryType = "arraybuffer";
-  ws.onopen = sendVisibility;
+  ws.onopen = () => {
+    sendVisibility();
+    if (relayLive) send({ t: "relay", d: true });
+  };
   ws.onmessage = (ev) => {
     if (ev.data instanceof ArrayBuffer) {
-      onMedia?.(ev.data);
+      if (!relayLive) onMedia?.(ev.data);
       return;
     }
     const msg = JSON.parse(ev.data);
     if (msg.t === "state") {
+      if (msg.relay) {
+        relayToken = msg.relay;
+        openRelay();
+      }
       announceControl(state.value, msg);
       const prev = state.value?.session;
       if (msg.session?.id === prev?.id) {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"testing"
+	"time"
 )
 
 func TestReadAccessUnits(t *testing.T) {
@@ -65,7 +66,7 @@ func TestReadOpusPackets(t *testing.T) {
 	}
 }
 
-func TestHubGOPReplayAndKeyWait(t *testing.T) {
+func TestHubKeyReplayAndKeyWait(t *testing.T) {
 	h := NewHub()
 	early := h.Subscribe()
 	h.Publish(NewFrame(KindVideo, 0, 0, []byte{1}))
@@ -80,8 +81,10 @@ func TestHubGOPReplayAndKeyWait(t *testing.T) {
 	if f := <-late.C; f[10] != 2 || !f.Key() {
 		t.Fatal("late sub should get the cached keyframe first")
 	}
-	if f := <-late.C; f[10] != 3 {
-		t.Fatal("late sub should get the rest of the GOP")
+	h.Publish(NewFrame(KindVideo, 0, 0, []byte{4}))
+	h.Publish(NewFrame(KindVideo, FlagKey, 0, []byte{5}))
+	if f := <-late.C; f[10] != 5 {
+		t.Fatalf("late sub should skip deltas until the next keyframe, got %d", f[10])
 	}
 	late.Close()
 	late.Close()
@@ -103,14 +106,42 @@ func TestHubPause(t *testing.T) {
 	}
 	s.Pause(false)
 	if f := <-s.C; f[10] != 1 || !f.Key() {
-		t.Fatal("resume should replay the GOP from its keyframe")
-	}
-	if f := <-s.C; f[10] != 2 {
-		t.Fatal("resume should replay the whole GOP")
+		t.Fatal("resume should send the last keyframe")
 	}
 	h.Publish(NewFrame(KindVideo, 0, 0, []byte{3}))
-	if f := <-s.C; f[10] != 3 {
-		t.Fatal("resumed sub should get live video")
+	h.Publish(NewFrame(KindVideo, FlagKey, 0, []byte{4}))
+	if f := <-s.C; f[10] != 4 {
+		t.Fatal("resumed sub should pick up at the next keyframe")
 	}
 	h.Close()
+}
+
+func TestFrameTS(t *testing.T) {
+	if ts := NewFrame(KindAudio, 0, 1500*time.Millisecond, nil).TS(); ts != 1500*time.Millisecond {
+		t.Fatalf("got %v", ts)
+	}
+}
+
+func TestPacer(t *testing.T) {
+	var p Pacer
+	now := time.Second
+	fresh, stale := now-MaxLag/2, now-2*MaxLag
+	if !p.Keep(NewFrame(KindVideo, 0, fresh, nil), now) {
+		t.Fatal("fresh delta should pass")
+	}
+	if p.Keep(NewFrame(KindVideo, 0, stale, nil), now) {
+		t.Fatal("stale delta should drop")
+	}
+	if p.Keep(NewFrame(KindVideo, 0, fresh, nil), now) {
+		t.Fatal("deltas after a drop should wait for a keyframe")
+	}
+	if !p.Keep(NewFrame(KindAudio, 0, fresh, nil), now) || p.Keep(NewFrame(KindAudio, 0, stale, nil), now) {
+		t.Fatal("audio should pass unless stale")
+	}
+	if !p.Keep(NewFrame(KindVideo, FlagKey, stale, nil), now) || !p.Keep(NewFrame(KindVideo, 0, fresh, nil), now) {
+		t.Fatal("a keyframe, even stale, should pass and resume deltas")
+	}
+	if p.Dropped != 3 {
+		t.Fatalf("dropped %d", p.Dropped)
+	}
 }

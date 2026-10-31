@@ -10,6 +10,7 @@ import (
 	"sigismundo/internal/config"
 	"sigismundo/internal/httpapi"
 	"sigismundo/internal/logger"
+	"sigismundo/internal/relay"
 	"sigismundo/internal/runner"
 	"sigismundo/internal/session"
 )
@@ -48,6 +49,9 @@ func main() {
 	sessions := session.NewManager(cat)
 	stop := make(chan struct{})
 	go sessions.Run(stop)
+	if config.RelayURL != "" {
+		go relay.Run(sessions, stop)
+	}
 	go httpapi.NewServer(config.ClientID, devAuth, sessions).Start()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

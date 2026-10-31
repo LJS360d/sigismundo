@@ -7,7 +7,9 @@ gzip on;
 gzip_types text/css application/javascript application/json application/wasm image/svg+xml;
 
 server {
-    listen 80;
+    # A small send buffer keeps a slow uplink's backlog in the server, which
+    # drops late frames, instead of in this socket, where they only add delay.
+    listen 80 sndbuf=64k;
     root /usr/share/nginx/html;
 
     # Discord frames the Activity, so no X-Frame-Options; only Discord may embed it.

@@ -42,6 +42,11 @@ var (
 	GPUDevice    string
 	GPURender    string
 	VideoEncoder string
+
+	// RelayURL: the relay Worker (relay/) the stream is published to, so the
+	// uplink carries one copy however many watch; empty streams directly.
+	RelayURL    string
+	RelaySecret []byte
 )
 
 func init() {
@@ -92,6 +97,12 @@ func init() {
 	GPUDevice = envOr("GPU_DEVICE", "auto")
 	GPURender = envOr("GPU_RENDER", "auto")
 	VideoEncoder = envOr("VIDEO_ENCODER", "auto")
+	RelayURL = strings.TrimSuffix(os.Getenv("RELAY_URL"), "/")
+	RelaySecret = []byte(os.Getenv("RELAY_SECRET"))
+	if RelayURL != "" && len(RelaySecret) == 0 {
+		log.Println("RELAY_URL set without RELAY_SECRET, streaming directly")
+		RelayURL = ""
+	}
 
 	log.Println("Config initialized")
 }

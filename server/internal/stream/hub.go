@@ -31,6 +31,11 @@ func NewFrame(kind, flags byte, ts time.Duration, payload []byte) Frame {
 func (f Frame) Kind() byte { return f[0] }
 func (f Frame) Key() bool  { return f[1]&FlagKey != 0 }
 
+// TS is the frame's stream-clock timestamp.
+func (f Frame) TS() time.Duration {
+	return time.Duration(binary.BigEndian.Uint64(f[2:10])) * time.Microsecond
+}
+
 // Sub receives frames. A subscriber that falls behind loses frames; for
 // video it then waits for the next keyframe so the decoder never sees a gap.
 type Sub struct {
@@ -46,7 +51,7 @@ func (s *Sub) Close() {
 }
 
 // Pause stops video to the subscriber while audio keeps flowing; resuming
-// replays the current GOP so the picture comes back at once.
+// sends the last keyframe so a picture is back at once.
 func (s *Sub) Pause(p bool) {
 	h := s.hub
 	h.mu.Lock()
@@ -55,24 +60,15 @@ func (s *Sub) Pause(p bool) {
 		return
 	}
 	s.paused = p
-	if p {
-		return
-	}
-	s.needKey = len(h.gop) == 0
-	for _, f := range h.gop {
-		select {
-		case s.C <- f:
-		default:
-			s.needKey = true
-			return
-		}
+	if !p {
+		h.sendKey(s)
 	}
 }
 
 type Hub struct {
 	mu    sync.Mutex
 	subs  map[*Sub]struct{}
-	gop   []Frame
+	key   Frame
 	start time.Time
 }
 
@@ -83,17 +79,28 @@ func NewHub() *Hub {
 // Since is the stream clock used for frame timestamps.
 func (h *Hub) Since() time.Duration { return time.Since(h.start) }
 
-// Subscribe replays the current GOP so the viewer can decode right away.
+// Subscribe sends the last keyframe so the viewer has a picture right away.
 func (h *Hub) Subscribe() *Sub {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	s := &Sub{C: make(chan Frame, max(256, len(h.gop)+64)), hub: h}
-	for _, f := range h.gop {
-		s.C <- f
-	}
-	s.needKey = len(h.gop) == 0
+	s := &Sub{C: make(chan Frame, 256), hub: h}
+	h.sendKey(s)
 	h.subs[s] = struct{}{}
 	return s
+}
+
+// sendKey gives s the last keyframe alone: replaying its whole GOP would
+// burst seconds of video onto an uplink that may have no room for it. Video
+// then resumes at the next keyframe, the deltas in between being useless
+// without the frames they reference.
+func (h *Hub) sendKey(s *Sub) {
+	s.needKey = true
+	if h.key != nil {
+		select {
+		case s.C <- h.key:
+		default:
+		}
+	}
 }
 
 func (h *Hub) remove(s *Sub) {
@@ -113,19 +120,14 @@ func (h *Hub) Close() {
 		delete(h.subs, s)
 		close(s.C)
 	}
-	h.gop = nil
+	h.key = nil
 }
 
 func (h *Hub) Publish(f Frame) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if f.Kind() == KindVideo {
-		if f.Key() {
-			h.gop = h.gop[:0:0]
-		}
-		if f.Key() || len(h.gop) > 0 {
-			h.gop = append(h.gop, f)
-		}
+	if f.Kind() == KindVideo && f.Key() {
+		h.key = f
 	}
 	for s := range h.subs {
 		if f.Kind() == KindVideo && s.paused {

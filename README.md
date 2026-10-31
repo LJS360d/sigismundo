@@ -20,6 +20,8 @@ Two parts, two images: `server/` (API, game pipeline) and `activity/` (the Activ
 4. `docker compose up -d --build`, and put a reverse proxy with TLS in front of port 8080 (the activity container).
 5. Optional but recommended: give it the GPU. Uncomment `devices`/`group_add` in the compose file and set `RENDER_GID` to `stat -c %g /dev/dri/renderD128`. Games then render on the GPU and the stream is encoded there too (VA-API on Intel/AMD, NVENC on NVIDIA); without one, everything runs on the CPU, which can take most of a small box. Knobs: `GPU_DEVICE`, `GPU_RENDER`, `VIDEO_ENCODER` in [server/.env.example](server/.env.example).
 
+6. Optional, for more than a few viewers: each viewer gets its own copy of the stream, so the upload grows with every one of them. A free [Cloudflare Worker](#the-relay) can fan it out instead.
+
 Try it without Discord (no Discord app needed, anyone reaching it can log in as anyone): `SIGISMUNDO_MODE=local docker compose up --build`, then open `http://localhost:8080/?user=1&name=me`.
 
 ## Under the hood
@@ -62,7 +64,7 @@ Each session starts from scratch, in this order (`server/internal/runner`):
 3. **Wine:** the prefix in `/data/wine` is created on the first run (game saves persist there), and DXVK's `d3d11`/`dxgi` are copied into it each launch. The game runs inside `wine explorer /desktop=…`, a virtual desktop that pins it to the capture size, since Xvfb can't change resolution.
 4. **Input:** mouse and keyboard events from the controller are injected into Xvfb with XTEST (pure Go, no xdotool).
 5. **Encoders:** two `ffmpeg` processes write to pipes that the server reads:
-   - video: `x11grab` → H.264 constrained baseline, constant bitrate (`STREAM_VIDEO_KBPS`), no B-frames, a keyframe every 2 seconds, SPS/PPS repeated on every keyframe so late joiners can start decoding, and an access unit delimiter before every frame so the server can split frames without parsing them.
+   - video: `x11grab` → H.264 high profile, quality-targeted VBR capped at `STREAM_VIDEO_KBPS` (static scenes cost next to nothing), no B-frames, a keyframe every 2 seconds, SPS/PPS repeated on every keyframe so late joiners can start decoding, and an access unit delimiter before every frame so the server can split frames without parsing them.
    - audio: the null sink's monitor → Opus, 20ms frames in low-delay mode, in Ogg pages of 20ms so packets aren't batched.
 6. **Watching the game:** launchers often hand off to a child process, so the server polls `/proc` for a process named like the exe instead of waiting on `wine`. If it never shows up within 90 seconds, the session fails; once it has come and gone, the session ends.
 
@@ -87,9 +89,18 @@ What stays on the CPU even with a GPU: copying each frame into Xvfb, out of it a
 
 Each encoded video frame or audio packet becomes one binary WebSocket message: `kind (1 video, 2 audio) | flags (1 = keyframe) | timestamp µs | payload`. Timestamps are the time the server received the data, on one clock for both streams, which is what keeps them in sync.
 
-The **hub** (`server/internal/stream`) fans frames out to every viewer. Each viewer has a buffer; if a slow viewer's buffer fills, its frames are dropped and its video skips ahead to the next keyframe, so the decoder never sees a gap. A new viewer first gets the frames since the last keyframe, so the picture appears immediately instead of after up to 2 seconds.
+The **hub** (`server/internal/stream`) fans frames out to every viewer. A frame that waited more than 250ms to be sent is dropped rather than sent late, and video then skips ahead to the next keyframe so the decoder never sees a gap: a slow link costs frames instead of piling up delay. To keep that backlog where it can be dropped, the socket send buffers are small (`sndbuf` in nginx too). A new viewer, or one coming back to the Activity, first gets the last keyframe, so a picture appears at once; it moves from the next keyframe on. While the Activity is off screen, a viewer gets audio only.
 
 nginx in the activity container proxies `/api` and the WebSocket to the server with buffering off. Discord's proxy sits in front of that.
+
+### The relay
+
+Every viewer gets its own copy of the stream, so the server's upload is the bitrate times the viewers. The relay (`relay/`, a Cloudflare Worker with a Durable Object) moves the fan-out to Cloudflare: the server publishes one copy (`server/internal/relay`), each viewer reads it from the Worker, and input and state still go straight to the server.
+
+- **Costs nothing:** it fits the Workers Free plan, which has no billing at all. Its daily cap of 100,000 requests counts incoming WebSocket messages at 20 to 1, so the server bundles audio with each video frame: one message per frame, about 23 hours of streaming a day at 24 fps (18 at 30). Outgoing messages, the fan-out, are free.
+- **Fails safe:** when the relay is down, out of its daily quota (until 00:00 UTC) or not mapped, viewers fall back to the server's own stream and retry the relay every 30 seconds.
+- **Setup:** deploy the Worker, set `RELAY_URL`/`RELAY_SECRET` on the server and add a `/relay` URL mapping, step by step in [relay/README.md](relay/README.md).
+- **Limits:** the Worker can't see how far behind each viewer is, so per-viewer frame dropping happens only on the server's side; a viewer whose own connection is too slow falls behind until its decoder skips ahead. Viewers' token checks use `RELAY_SECRET`, never `SESSION_SECRET`.
 
 ### In the Activity
 
