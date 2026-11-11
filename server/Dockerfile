@@ -21,6 +21,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     ffmpeg \
     fonts-liberation \
     intel-media-va-driver \
+    libmfx-gen1.2 \
     libgl1-mesa-dri \
     libglx-mesa0 \
     libvulkan1 \

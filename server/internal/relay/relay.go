@@ -13,8 +13,11 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
+	"os"
+	"strings"
 	"syscall"
 	"time"
 	"unsafe"
@@ -44,17 +47,22 @@ const (
 	tcpCongestion = 13 // TCP_CONGESTION
 )
 
-var dialer = websocket.Dialer{
-	HandshakeTimeout: 10 * time.Second,
-	WriteBufferSize:  64 << 10,
-	NetDialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-		c, err := (&net.Dialer{}).DialContext(ctx, network, addr)
-		if tc, ok := c.(*net.TCPConn); ok {
-			tc.SetWriteBuffer(sendBuffer)
-			useBBR(tc)
-		}
-		return c, err
-	},
+// dialer keeps the TCP connection in *tcp: under TLS (wss) the WebSocket's
+// own NetConn is the TLS wrapper, which has no kernel stats to read.
+func dialer(tcp **net.TCPConn) *websocket.Dialer {
+	return &websocket.Dialer{
+		HandshakeTimeout: 10 * time.Second,
+		WriteBufferSize:  64 << 10,
+		NetDialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			c, err := (&net.Dialer{}).DialContext(ctx, network, addr)
+			if tc, ok := c.(*net.TCPConn); ok {
+				tc.SetWriteBuffer(sendBuffer)
+				useBBR(tc)
+				*tcp = tc
+			}
+			return c, err
+		},
+	}
 }
 
 // useBBR switches the socket to BBR congestion control when the kernel has
@@ -71,14 +79,15 @@ func useBBR(tc *net.TCPConn) {
 	})
 	if serr != nil {
 		logger.Infof("relay: BBR unavailable (%v), staying on the default congestion control; `modprobe tcp_bbr` on the host enables it", serr)
+	} else {
+		logger.Infof("relay: using BBR congestion control")
 	}
 }
 
 // tcpInfo reads the kernel's view of the connection: round trip and
 // retransmits tell a lossy uplink from a slow one.
-func tcpInfo(c net.Conn) (*syscall.TCPInfo, bool) {
-	tc, ok := c.(*net.TCPConn)
-	if !ok {
+func tcpInfo(tc *net.TCPConn) (*syscall.TCPInfo, bool) {
+	if tc == nil {
 		return nil, false
 	}
 	raw, err := tc.SyscallConn()
@@ -93,6 +102,17 @@ func tcpInfo(c net.Conn) (*syscall.TCPInfo, bool) {
 			uintptr(unsafe.Pointer(&info)), uintptr(unsafe.Pointer(&n)), 0)
 	})
 	return &info, errno == 0
+}
+
+// load is the host's 1-minute load average, as a string; a box with fewer
+// cores than that is CPU starved, which delays everything, frames included.
+func load() string {
+	b, _ := os.ReadFile("/proc/loadavg")
+	f := strings.Fields(string(b))
+	if len(f) == 0 {
+		return "?"
+	}
+	return f[0]
 }
 
 // Hubs gives the running session's stream (session.Manager), nil when none.
@@ -120,7 +140,8 @@ func Run(sessions Hubs, stop <-chan struct{}) {
 }
 
 func publish(sessions Hubs, stop <-chan struct{}, backoff *time.Duration) error {
-	conn, _, err := dialer.Dial(config.RelayURL+"/publish", http.Header{
+	var tcp *net.TCPConn
+	conn, _, err := dialer(&tcp).Dial(config.RelayURL+"/publish", http.Header{
 		"Authorization": {"Bearer " + string(config.RelaySecret)},
 	})
 	if err != nil {
@@ -140,13 +161,17 @@ func publish(sessions Hubs, stop <-chan struct{}, backoff *time.Duration) error 
 			}
 		}
 	}()
-	// the longest a write blocked, a stalled uplink, since the last stats
-	var slowest time.Duration
+	// Since the last stats: the longest a write blocked (a stalled uplink),
+	// the latest a frame was by the time its write began (delay inside the
+	// server: a starved CPU, a slow encoder) and the biggest message.
+	var slowest, lateBefore time.Duration
+	biggest := 0
 	write := func(typ int, b []byte) error {
 		conn.SetWriteDeadline(time.Now().Add(writeWait))
 		t := time.Now()
 		err := conn.WriteMessage(typ, b)
 		slowest = max(slowest, time.Since(t))
+		biggest = max(biggest, len(b))
 		return err
 	}
 	var lastRetrans uint32
@@ -212,22 +237,22 @@ func publish(sessions Hubs, stop <-chan struct{}, backoff *time.Duration) error 
 					continue
 				}
 			}
+			lateBefore = max(lateBefore, hub.Since()-f.TS())
 			if err := write(websocket.BinaryMessage, bundle); err != nil {
 				return err
 			}
 			bundle, audio = bundle[:0], 0
 		case <-stats.C:
-			if hub == nil {
-				slowest, pacer.Dropped = 0, 0
-				continue
+			if hub != nil {
+				link := "tcp stats unavailable"
+				if info, ok := tcpInfo(tcp); ok {
+					link = fmt.Sprintf("rtt %dms ±%d, retransmits +%d", info.Rtt/1000, info.Rttvar/1000, info.Total_retrans-lastRetrans)
+					lastRetrans = info.Total_retrans
+				}
+				logger.Infof("relay uplink: %s, longest write %s, latest frame before writing %s, biggest message %dKB, dropped %d late frames, load %s",
+					link, slowest.Round(time.Millisecond), lateBefore.Round(time.Millisecond), biggest>>10, pacer.Dropped, load())
 			}
-			if info, ok := tcpInfo(conn.NetConn()); ok {
-				logger.Infof("relay uplink: rtt %dms ±%d, retransmits %d (+%d), longest write %s, dropped %d late frames",
-					info.Rtt/1000, info.Rttvar/1000, info.Total_retrans, info.Total_retrans-lastRetrans,
-					slowest.Round(time.Millisecond), pacer.Dropped)
-				lastRetrans = info.Total_retrans
-			}
-			slowest, pacer.Dropped = 0, 0
+			slowest, lateBefore, biggest, pacer.Dropped = 0, 0, 0, 0
 		case <-ping.C:
 			if err := write(websocket.PingMessage, nil); err != nil {
 				return err

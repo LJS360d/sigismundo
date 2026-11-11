@@ -12,6 +12,7 @@ import (
 
 	"sigismundo/internal/config"
 	"sigismundo/internal/logger"
+	"sigismundo/internal/stream"
 )
 
 // GPU is what the machine offers for rendering games and encoding video,
@@ -48,7 +49,8 @@ func DetectGPU() *GPU {
 		}
 		logger.Infof("gpu: device %s, render on %s, encoder %s", dev,
 			map[bool]string{true: "gpu", false: "cpu (lavapipe)"}[gpu.Render], gpu.Encoder)
-		logger.Debugf("gpu: env %v, encoder args %v", gpu.Env, gpu.Args)
+		logger.Infof("gpu: encoder args %v", gpu.Args)
+		logger.Debugf("gpu: env %v", gpu.Env)
 	})
 	return &gpu
 }
@@ -154,28 +156,55 @@ type encoder struct {
 // on static scenes too. High profile for CABAC; no B-frames, they add latency.
 // A keyframe a second: a viewer joining, or catching up after the relay held
 // its video back, waits for one.
+//
+// Where the encoder can, frames are capped at maxFrame: a keyframe is
+// otherwise many times the size of the frames around it, a burst that a tight
+// uplink queues up in front of everything after it. A capped keyframe starts
+// out blurrier and sharpens over the next frames.
 func encoders(device string) []encoder {
 	kbps := strconv.Itoa(config.VideoBitrate) + "k"
+	vbr := strconv.Itoa(config.VideoBitrate*3/5) + "k"
+	maxFrame := strconv.Itoa(config.VideoBitrate * 1000 / 8 / config.FPS * 4)
 	rate := []string{"-maxrate", kbps, "-bufsize", strconv.Itoa(config.VideoBitrate/2) + "k",
 		"-g", strconv.Itoa(config.FPS), "-bf", "0", "-profile:v", "high"}
 	with := func(args ...string) []string { return append(args, rate...) }
 	var vaapi [][]string
 	// Plain, then low-power (all some Intel drivers offer); color conversion
-	// on the GPU, then on the CPU; QVBR, then VBR where the driver lacks it.
-	// async_depth 1 keeps one frame in flight instead of two, a frame less
-	// of latency.
+	// on the GPU, then on the CPU; QVBR, then VBR where the driver lacks it;
+	// frames capped, then not where the driver can't. async_depth 1 keeps one
+	// frame in flight instead of two, a frame less of latency.
 	for _, lp := range []string{"0", "1"} {
 		for _, vf := range []string{"hwupload,scale_vaapi=format=nv12", "format=nv12,hwupload"} {
 			for _, rc := range [][]string{{"-rc_mode", "QVBR", "-global_quality", "25", "-b:v", kbps},
-				{"-rc_mode", "VBR", "-b:v", strconv.Itoa(config.VideoBitrate*3/5) + "k"}} {
-				vaapi = append(vaapi, with(append([]string{"-vaapi_device", device, "-vf", vf, "-c:v", "h264_vaapi",
-					"-low_power", lp, "-async_depth", "1", "-aud", "1"}, rc...)...))
+				{"-rc_mode", "VBR", "-b:v", vbr}} {
+				for _, limit := range [][]string{{"-max_frame_size", maxFrame}, nil} {
+					args := []string{"-vaapi_device", device, "-vf", vf, "-c:v", "h264_vaapi",
+						"-low_power", lp, "-async_depth", "1", "-aud", "1"}
+					vaapi = append(vaapi, with(append(append(args, rc...), limit...)...))
+				}
 			}
+		}
+	}
+	// Intel's own API, on the same driver as VAAPI, with the knobs VAAPI
+	// lacks: a rate control that holds each frame near its share of the
+	// bitrate (low_delay_brc), no lookahead, one frame in flight. SPS/PPS
+	// go in front of every keyframe for viewers who join, then the delimiter
+	// ReadAccessUnits cuts at.
+	var qsv [][]string
+	for _, vf := range []string{"format=bgra,hwupload=extra_hw_frames=8,vpp_qsv=format=nv12:async_depth=1",
+		"format=nv12,hwupload=extra_hw_frames=8"} {
+		for _, limit := range [][]string{{"-max_frame_size", maxFrame}, nil} {
+			args := []string{"-init_hw_device", "vaapi=va:" + device, "-init_hw_device", "qsv=qs@va",
+				"-filter_hw_device", "qs", "-vf", vf, "-c:v", "h264_qsv", "-preset", "veryfast",
+				"-async_depth", "1", "-look_ahead", "0", "-low_delay_brc", "1", "-b:v", vbr,
+				"-bsf:v", "dump_extra=freq=keyframe,h264_metadata=aud=insert"}
+			qsv = append(qsv, with(append(args, limit...)...))
 		}
 	}
 	return []encoder{
 		{"h264_nvenc", [][]string{with("-c:v", "h264_nvenc", "-preset", "p1", "-tune", "ull", "-zerolatency", "1",
 			"-rc", "vbr", "-cq", "28", "-b:v", "0", "-aud", "1")}},
+		{"h264_qsv", qsv},
 		{"h264_vaapi", vaapi},
 		// ultrafast turns CABAC off; it costs little CPU and saves ~10%.
 		{"libx264", [][]string{with("-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
@@ -184,8 +213,8 @@ func encoders(device string) []encoder {
 	}
 }
 
-// pickEncoder probes VIDEO_ENCODER, or under auto NVENC (NVIDIA only) then
-// VAAPI, falling back to libx264.
+// pickEncoder probes VIDEO_ENCODER, or under auto NVENC (NVIDIA only), QSV
+// (Intel only) then VAAPI, falling back to libx264.
 func pickEncoder(device, driver string) (string, []string) {
 	all := encoders(device)
 	fallback := all[len(all)-1]
@@ -199,6 +228,8 @@ func pickEncoder(device, driver string) (string, []string) {
 		case e.name == "h264_nvenc" && driver != "nvidia" && nvctl != nil:
 			continue
 		case e.name == "h264_vaapi" && device == "":
+			continue
+		case e.name == "h264_qsv" && driver != "i915" && driver != "xe":
 			continue
 		}
 		for _, args := range e.variants {
@@ -216,13 +247,18 @@ func pickEncoder(device, driver string) (string, []string) {
 	return fallback.name, fallback.variants[0]
 }
 
-// probe encodes a few frames shaped like x11grab's output.
+// probe encodes two keyframes' worth of frames shaped like x11grab's
+// output, and checks the stream is one viewers can join: every keyframe
+// carries SPS/PPS, every frame starts at a delimiter.
 func probe(enc []string) error {
 	args := append([]string{"-loglevel", "error", "-nostdin", "-f", "lavfi",
-		"-i", fmt.Sprintf("color=s=%dx%d:r=%d:d=0.2,format=bgr0", config.Width, config.Height, config.FPS)}, enc...)
-	out, err := exec.Command("ffmpeg", append(args, "-f", "null", "-")...).CombinedOutput()
+		"-i", fmt.Sprintf("testsrc2=s=%dx%d:r=%d,format=bgr0", config.Width, config.Height, config.FPS)}, enc...)
+	cmd := exec.Command("ffmpeg", append(args, "-frames:v", strconv.Itoa(config.FPS+2), "-f", "h264", "-")...)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if err != nil {
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
 	}
-	return nil
+	return stream.CheckJoinable(out)
 }

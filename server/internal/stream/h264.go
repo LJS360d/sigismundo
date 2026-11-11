@@ -3,11 +3,14 @@ package stream
 import (
 	"bufio"
 	"bytes"
+	"fmt"
 	"io"
 )
 
 const (
 	nalIDR = 5
+	nalSPS = 7
+	nalPPS = 8
 	nalAUD = 9
 )
 
@@ -46,6 +49,37 @@ func ReadAccessUnits(r io.Reader, emit func(AccessUnit)) error {
 	})
 	flush()
 	return err
+}
+
+// CheckJoinable reports whether an encoded stream holds at least two
+// keyframes, each with the SPS/PPS a viewer joining there needs, and a
+// delimiter before every frame.
+func CheckJoinable(data []byte) error {
+	var aus []AccessUnit
+	ReadAccessUnits(bytes.NewReader(data), func(au AccessUnit) { aus = append(aus, au) })
+	keys := 0
+	for i, au := range aus {
+		var types [32]bool
+		splitNALs(bufio.NewReader(bytes.NewReader(au.Data)), func(nal []byte) {
+			if len(nal) > 0 {
+				types[nal[0]&0x1f] = true
+			}
+		})
+		// ReadAccessUnits writes each NAL behind a 4-byte start code
+		if len(au.Data) < 5 || au.Data[4]&0x1f != nalAUD {
+			return fmt.Errorf("frame %d doesn't start with an access unit delimiter", i)
+		}
+		if au.Key {
+			if !types[nalSPS] || !types[nalPPS] {
+				return fmt.Errorf("keyframe %d has no SPS/PPS", i)
+			}
+			keys++
+		}
+	}
+	if keys < 2 {
+		return fmt.Errorf("%d keyframes in %d frames, want 2", keys, len(aus))
+	}
+	return nil
 }
 
 // splitNALs calls fn with every NAL unit payload (without start code).
