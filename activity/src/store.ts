@@ -35,6 +35,8 @@ export const isMenuKey = (ev: KeyboardEvent) => ev.ctrlKey && ev.shiftKey && ev.
 export let onMedia: ((buf: ArrayBuffer) => void) | undefined;
 export const setMedia = (fn?: (buf: ArrayBuffer) => void) => (onMedia = fn);
 
+const KIND_AUDIO = 2;
+
 let ws: WebSocket | undefined;
 const proto = location.protocol === "https:" ? "wss" : "ws";
 
@@ -49,36 +51,66 @@ export function send(msg: Record<string, unknown>) {
 let relay: WebSocket | undefined;
 let relayToken = "";
 let relayLive = false;
-const RELAY_RETRY = 30_000;
+// retries back off from RELAY_RETRY to RELAY_RETRY_MAX, and start over once it delivers
+const RELAY_RETRY = 2_000;
+const RELAY_RETRY_MAX = 30_000;
+let relayRetry = RELAY_RETRY;
+// The last audio timestamp (µs) from the relay, acked every ACK_EVERY ms: the
+// relay holds video back from a viewer that falls behind. Audio, as it is
+// never replayed from a cache and keeps flowing while video is held back.
+const ACK_EVERY = 250;
+let newest = -1;
+
+// what the stream overlay (STATS_KEY) shows
+export type Stats = { source: "relay" | "direct"; lag?: number };
+export const stats = signal<Stats>({ source: "direct" });
+export const showStats = signal(false);
+export const STATS_KEY = "Ctrl+Shift+L";
+export const isStatsKey = (ev: KeyboardEvent) => ev.ctrlKey && ev.shiftKey && ev.code === "KeyL";
 
 function openRelay() {
   if (relay || !relayToken) return;
   const r = (relay = new WebSocket(`${proto}://${location.host}/relay/view?token=${encodeURIComponent(relayToken)}`));
   r.binaryType = "arraybuffer";
   r.onopen = sendVisibility;
+  const ack = setInterval(() => {
+    if (newest >= 0 && r.readyState === WebSocket.OPEN) r.send(JSON.stringify({ t: "ack", ts: newest }));
+  }, ACK_EVERY);
   r.onmessage = (ev) => {
-    if (!(ev.data instanceof ArrayBuffer)) return;
+    if (!(ev.data instanceof ArrayBuffer)) {
+      const m = JSON.parse(ev.data);
+      if (m.t === "lag") stats.value = { source: "relay", lag: m.ms };
+      return;
+    }
     if (!relayLive) {
       relayLive = true;
+      relayRetry = RELAY_RETRY;
+      stats.value = { source: "relay" };
       send({ t: "relay", d: true });
     }
     unbundle(ev.data);
   };
   r.onclose = () => {
+    clearInterval(ack);
     relay = undefined;
+    newest = -1;
     if (relayLive) {
       relayLive = false;
+      stats.value = { source: "direct" };
       send({ t: "relay", d: false });
     }
-    setTimeout(openRelay, RELAY_RETRY);
+    setTimeout(openRelay, relayRetry);
+    relayRetry = Math.min(relayRetry * 2, RELAY_RETRY_MAX);
   };
 }
 
-// A relay message bundles frames, each prefixed by its length as u32 BE.
+// A relay message bundles frames, each prefixed by its length as u32 BE (see
+// player.ts for the frame format).
 function unbundle(buf: ArrayBuffer) {
   const view = new DataView(buf);
   for (let off = 0; off + 4 <= buf.byteLength; ) {
     const n = view.getUint32(off);
+    if (n >= 10 && view.getUint8(off + 4) === KIND_AUDIO) newest = Number(view.getBigUint64(off + 6));
     onMedia?.(buf.slice(off + 4, off + 4 + n));
     off += 4 + n;
   }

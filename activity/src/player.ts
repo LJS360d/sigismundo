@@ -4,11 +4,12 @@
 const KIND_VIDEO = 1;
 const KIND_AUDIO = 2;
 const FLAG_KEY = 1;
-// how far ahead of the audio clock packets are scheduled, absorbs jitter
-const JITTER = 0.12;
+// how far ahead of the audio clock packets are scheduled, absorbs jitter;
+// above the ~42ms between relay bundles at 24fps, which audio arrives in
+const JITTER = 0.08;
 // a backlog past this (bursty delivery) restarts at JITTER; video follows the
 // audio clock, so this bounds the added delay for both
-const MAX_AHEAD = 0.25;
+const MAX_AHEAD = 0.18;
 const MAX_QUEUED_FRAMES = 30;
 
 type Decoded = { ts: number; frame: VideoFrame };

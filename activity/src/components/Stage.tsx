@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "preact/hooks";
 import { useSignal } from "@preact/signals";
 import { Player } from "../player";
-import { canLaunch, catalog, controlling, isMenuKey, MENU_KEY, menu, send, setMedia, type SessionView } from "../store";
+import { canLaunch, catalog, controlling, isMenuKey, isStatsKey, MENU_KEY, menu, send, setMedia, showStats, stats, type SessionView } from "../store";
 import { vtName } from "./Catalog";
 import { ControllerBadge } from "./Control";
 
@@ -74,6 +74,12 @@ export function Stage({ session }: { session: SessionView }) {
     // The menu shortcut toggles the stop menu instead of reaching the game.
     const key = (d: boolean) => (ev: KeyboardEvent) => {
       if (d) unlock();
+      // the stats overlay is the viewer's own: it works without control too
+      if (d && isStatsKey(ev)) {
+        if (!ev.repeat) showStats.value = !showStats.value;
+        ev.preventDefault();
+        return;
+      }
       if (d && isMenuKey(ev)) {
         if (!ev.repeat) menu.value = !menu.value;
         ev.preventDefault();
@@ -119,6 +125,7 @@ export function Stage({ session }: { session: SessionView }) {
         audioBlocked.value && <div class="pointer-events-none absolute inset-x-0 bottom-4 mx-auto w-fit rounded-lg bg-black/70 px-5 py-3">Click for sound</div>
       )}
       <ControllerBadge awayOnly />
+      {showStats.value && <StatsOverlay />}
       {menu.value && (
         <div class="absolute inset-0 grid place-items-center bg-black/55 p-4 backdrop-blur-sm" onClick={(e) => e.target === e.currentTarget && (menu.value = false)}>
           <div class="w-full max-w-90 rounded-xl border border-line bg-panel p-5 shadow-2xl" role="dialog" aria-label="Game menu">
@@ -156,6 +163,18 @@ function Loading({ session }: { session: SessionView }) {
           Press <kbd>{MENU_KEY}</kbd> in game for the menu.
         </p>
       </div>
+    </div>
+  );
+}
+
+// Where the stream comes from and, through the relay, how far behind the
+// newest frame this viewer is (past 300ms the relay holds video back).
+function StatsOverlay() {
+  const { source, lag } = stats.value;
+  return (
+    <div class="pointer-events-none absolute top-2 left-2 rounded bg-black/70 px-2 py-1 font-mono text-xs text-white/90">
+      {source}
+      {lag !== undefined && ` · behind ${lag}ms`}
     </div>
   );
 }

@@ -152,10 +152,12 @@ type encoder struct {
 // Every encoder runs quality-targeted VBR capped at STREAM_VIDEO_KBPS: each
 // viewer gets its own copy of the stream, and CBR would spend the full rate
 // on static scenes too. High profile for CABAC; no B-frames, they add latency.
+// A keyframe a second: a viewer joining, or catching up after the relay held
+// its video back, waits for one.
 func encoders(device string) []encoder {
 	kbps := strconv.Itoa(config.VideoBitrate) + "k"
 	rate := []string{"-maxrate", kbps, "-bufsize", strconv.Itoa(config.VideoBitrate/2) + "k",
-		"-g", strconv.Itoa(config.FPS * 2), "-bf", "0", "-profile:v", "high"}
+		"-g", strconv.Itoa(config.FPS), "-bf", "0", "-profile:v", "high"}
 	with := func(args ...string) []string { return append(args, rate...) }
 	var vaapi [][]string
 	// Plain, then low-power (all some Intel drivers offer); color conversion

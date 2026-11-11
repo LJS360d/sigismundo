@@ -7,17 +7,27 @@ import { DurableObject } from "cloudflare:workers";
 interface Env {
   ROOM: DurableObjectNamespace<Room>;
   RELAY_SECRET: string;
+  // region to place the room in, near the server (see wrangler.toml)
+  LOCATION?: DurableObjectLocationHint;
 }
 
 const KIND_VIDEO = 1;
 const FLAG_KEY = 1;
+// A viewer this far (µs of stream time) behind the newest frame gets no video
+// until it catches up, then resumes at a keyframe: a slow link costs frames
+// instead of piling up delay that never goes away.
+const MAX_LAG = 300_000;
 const enc = new TextEncoder();
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
-    if (req.headers.get("Upgrade") !== "websocket") return new Response("sigismundo relay\n", { status: 426 });
     // the URL mapping may or may not strip its /relay prefix
     const { pathname, searchParams } = new URL(req.url);
+    if (req.headers.get("Upgrade") !== "websocket") {
+      // where the room runs, to check it sits near the server
+      if (pathname.endsWith("/where")) return room(env).fetch("https://room/where");
+      return new Response("sigismundo relay\n", { status: 426 });
+    }
     let role: string;
     if (pathname.endsWith("/publish")) {
       if (!equal(req.headers.get("Authorization") ?? "", `Bearer ${env.RELAY_SECRET}`)) return unauthorized();
@@ -28,25 +38,38 @@ export default {
     } else {
       return new Response("not found", { status: 404 });
     }
-    // One room, as the server runs one session at a time. It is placed near
-    // whoever reaches it first, normally the publisher.
-    const room = env.ROOM.get(env.ROOM.idFromName("main"));
-    return room.fetch(new Request(`https://room/${role}`, req));
+    return room(env).fetch(new Request(`https://room/${role}`, req));
   },
 };
 
-type Viewer = { needKey: boolean; paused: boolean };
+// One room, as the server runs one session at a time. A Durable Object stays
+// where it was first created, so the name carries the region: changing
+// LOCATION makes a new room there.
+function room(env: Env) {
+  const loc = env.LOCATION;
+  return env.ROOM.get(env.ROOM.idFromName(loc ? `main-${loc}` : "main"), loc ? { locationHint: loc } : undefined);
+}
+
+// behind: the last ack put it past MAX_LAG
+type Viewer = { needKey: boolean; paused: boolean; behind: boolean };
 
 export class Room extends DurableObject<Env> {
   private pub?: WebSocket;
   private viewers = new Map<WebSocket, Viewer>();
   // the last keyframe as a one-frame bundle: a picture for whoever joins
   private key?: ArrayBuffer;
+  // timestamp of the newest frame published
+  private newest = 0;
 
   async fetch(req: Request): Promise<Response> {
+    const path = new URL(req.url).pathname;
+    if (path === "/where") {
+      const trace = await (await fetch("https://cloudflare.com/cdn-cgi/trace")).text();
+      return new Response(`room colo: ${/^colo=(.*)$/m.exec(trace)?.[1]}\nviewers: ${this.viewers.size}\npublisher: ${!!this.pub}\n`);
+    }
     const { 0: client, 1: ws } = new WebSocketPair();
     ws.accept();
-    if (new URL(req.url).pathname === "/publish") this.publish(ws);
+    if (path === "/publish") this.publish(ws);
     else this.view(ws);
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -76,16 +99,26 @@ export class Room extends DurableObject<Env> {
       ws.close(1013, "no stream");
       return;
     }
-    const v: Viewer = { needKey: true, paused: false };
+    const v: Viewer = { needKey: true, paused: false, behind: false };
     this.viewers.set(ws, v);
     this.sendKey(ws, v);
-    // {"t":"vis","d":false} while the Activity is off screen: no video then
     ws.addEventListener("message", (ev) => {
       const m = typeof ev.data === "string" ? parse(ev.data) : undefined;
-      if (m?.t !== "vis") return;
-      const paused = !m.d;
-      if (v.paused && !paused) this.sendKey(ws, v);
-      v.paused = paused;
+      if (m?.t === "vis") {
+        // {"t":"vis","d":false} while the Activity is off screen: no video then
+        const paused = !m.d;
+        if (v.paused && !paused) this.sendKey(ws, v);
+        v.paused = paused;
+      } else if (m?.t === "ack" && typeof m.ts === "number") {
+        // {"t":"ack","ts":µs}: the newest frame the viewer has. Audio keeps
+        // flowing while it is behind, so acks keep coming and tell when the
+        // backlog has drained.
+        const lag = Math.max(0, this.newest - m.ts);
+        const behind = lag > MAX_LAG;
+        if (behind && !v.behind) v.needKey = true;
+        v.behind = behind;
+        this.send(ws, JSON.stringify({ t: "lag", ms: Math.round(lag / 1000) }));
+      }
     });
     const gone = () => this.viewers.delete(ws);
     ws.addEventListener("close", gone);
@@ -103,8 +136,9 @@ export class Room extends DurableObject<Env> {
     const key = video && (view.getUint8(last + 5) & FLAG_KEY) !== 0;
     const audio = video ? b.slice(0, last) : b;
     if (key) this.key = b.slice(last);
+    if (last + 14 <= b.byteLength) this.newest = Number(view.getBigUint64(last + 6));
     for (const [ws, v] of this.viewers) {
-      if (video && (v.paused || (v.needKey && !key))) {
+      if (video && (v.paused || v.behind || (v.needKey && !key))) {
         if (audio.byteLength > 0) this.send(ws, audio);
         continue;
       }
@@ -122,10 +156,14 @@ export class Room extends DurableObject<Env> {
 
   private reset() {
     this.key = undefined;
-    for (const v of this.viewers.values()) v.needKey = true;
+    this.newest = 0;
+    for (const v of this.viewers.values()) {
+      v.needKey = true;
+      v.behind = false;
+    }
   }
 
-  private send(ws: WebSocket, b: ArrayBuffer) {
+  private send(ws: WebSocket, b: ArrayBuffer | string) {
     try {
       ws.send(b);
     } catch {
@@ -134,7 +172,7 @@ export class Room extends DurableObject<Env> {
   }
 }
 
-function parse(s: string): { t?: string; d?: boolean } | undefined {
+function parse(s: string): { t?: string; d?: boolean; ts?: number } | undefined {
   try {
     return JSON.parse(s);
   } catch {

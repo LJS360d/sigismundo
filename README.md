@@ -64,7 +64,7 @@ Each session starts from scratch, in this order (`server/internal/runner`):
 3. **Wine:** the prefix in `/data/wine` is created on the first run (game saves persist there), and DXVK's `d3d11`/`dxgi` are copied into it each launch. The game runs inside `wine explorer /desktop=…`, a virtual desktop that pins it to the capture size, since Xvfb can't change resolution.
 4. **Input:** mouse and keyboard events from the controller are injected into Xvfb with XTEST (pure Go, no xdotool).
 5. **Encoders:** two `ffmpeg` processes write to pipes that the server reads:
-   - video: `x11grab` → H.264 high profile, quality-targeted VBR capped at `STREAM_VIDEO_KBPS` (static scenes cost next to nothing), no B-frames, a keyframe every 2 seconds, SPS/PPS repeated on every keyframe so late joiners can start decoding, and an access unit delimiter before every frame so the server can split frames without parsing them.
+   - video: `x11grab` → H.264 high profile, quality-targeted VBR capped at `STREAM_VIDEO_KBPS` (static scenes cost next to nothing), no B-frames, a keyframe every second, SPS/PPS repeated on every keyframe so late joiners can start decoding, and an access unit delimiter before every frame so the server can split frames without parsing them.
    - audio: the null sink's monitor → Opus, 20ms frames in low-delay mode, in Ogg pages of 20ms so packets aren't batched.
 6. **Watching the game:** launchers often hand off to a child process, so the server polls `/proc` for a process named like the exe instead of waiting on `wine`. If it never shows up within 90 seconds, the session fails; once it has come and gone, the session ends.
 
@@ -106,7 +106,7 @@ Every viewer gets its own copy of the stream, so the server's upload is the bitr
 
 - **Sign-in:** the Discord SDK's `authorize` gives a code; the server trades it for the user's identity with `CLIENT_SECRET` and returns a signed token (`SESSION_SECRET`, valid 12 hours) for the WebSocket. Outside Discord, local mode hands out tokens for any user instead.
 - **Video:** WebCodecs `VideoDecoder`, configured from the codec details in the stream itself, with hardware decoding preferred. If decoding falls behind, it skips to the next keyframe.
-- **Audio:** WebCodecs `AudioDecoder`, or a WASM Opus decoder where the browser lacks Opus support. Packets play back to back about 120ms ahead to absorb network jitter. If a backlog builds past 250ms, it restarts at 120ms so the delay doesn't keep growing.
+- **Audio:** WebCodecs `AudioDecoder`, or a WASM Opus decoder where the browser lacks Opus support. Packets play back to back about 80ms ahead to absorb network jitter. If a backlog builds past 180ms, it restarts at 80ms so the delay doesn't keep growing.
 - **Sync:** each audio packet maps server time to the browser's audio clock, and video frames are shown when they're due on that clock. Until a click unlocks audio (browsers block autoplay), frames are shown as soon as they're decoded.
 - **Input:** pointer position (as 0–1 of the frame, once per animation frame), buttons, wheel and keys (`KeyboardEvent.code`, mapped to X keysyms on the server). Ctrl+Shift+X opens the stop menu instead of reaching the game.
 
