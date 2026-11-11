@@ -62,7 +62,10 @@ const ACK_EVERY = 250;
 let newest = -1;
 
 // what the stream overlay (STATS_KEY) shows
-export type Stats = { source: "relay" | "direct"; lag?: number };
+// lag: how far behind the relay's newest frame this viewer is; pub: how late
+// the server's frames reached the relay (its uplink); held: the relay holds
+// video back, this viewer having been behind for a while
+export type Stats = { source: "relay" | "direct"; lag?: number; pub?: number; held?: boolean };
 export const stats = signal<Stats>({ source: "direct" });
 export const showStats = signal(false);
 export const STATS_KEY = "Ctrl+Shift+L";
@@ -79,7 +82,7 @@ function openRelay() {
   r.onmessage = (ev) => {
     if (!(ev.data instanceof ArrayBuffer)) {
       const m = JSON.parse(ev.data);
-      if (m.t === "lag") stats.value = { source: "relay", lag: m.ms };
+      if (m.t === "lag") stats.value = { source: "relay", lag: m.ms, pub: m.pub, held: m.held };
       return;
     }
     if (!relayLive) {

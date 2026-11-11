@@ -128,12 +128,16 @@ export class Player {
   }
 
   // Audio plays back to back; each packet re-anchors the server-to-audio
-  // clock mapping that video frames are timed against.
+  // clock mapping that video frames are timed against. After a stall the
+  // backlog arrives in a burst: packets that would land past MAX_AHEAD are
+  // dropped, not played over what is already scheduled, so the audio skips
+  // ahead cleanly and video, timed by it, follows.
   private schedule(chans: Float32Array[], rate: number, ts: number) {
     if (this.audioBlocked) return;
     const now = this.ctx.currentTime;
     let at = this.nextAudio;
-    if (at < now || at > now + MAX_AHEAD) at = now + JITTER;
+    if (at > now + MAX_AHEAD) return;
+    if (at < now) at = now + JITTER;
     const buf = this.ctx.createBuffer(chans.length, chans[0].length, rate);
     chans.forEach((c, i) => buf.copyToChannel(c as Float32Array<ArrayBuffer>, i));
     const src = this.ctx.createBufferSource();

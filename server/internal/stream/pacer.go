@@ -11,13 +11,19 @@ const MaxLag = 250 * time.Millisecond
 // deltas are useless until one. Late audio goes too, since the player times
 // video by it.
 type Pacer struct {
+	// Max overrides MaxLag when set.
+	Max     time.Duration
 	late    bool
 	Dropped int
 }
 
 // Keep reports whether f is still worth writing at stream time now.
 func (p *Pacer) Keep(f Frame, now time.Duration) bool {
-	stale := now-f.TS() > MaxLag
+	limit := MaxLag
+	if p.Max > 0 {
+		limit = p.Max
+	}
+	stale := now-f.TS() > limit
 	switch {
 	case f.Kind() == KindVideo && f.Key():
 		p.late = false

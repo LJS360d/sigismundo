@@ -15,7 +15,9 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"syscall"
 	"time"
+	"unsafe"
 
 	"sigismundo/internal/config"
 	"sigismundo/internal/logger"
@@ -31,6 +33,15 @@ const (
 	maxAudio = 5
 	// sendBuffer caps the kernel's queue for the socket, as in httpapi
 	sendBuffer = 32 << 10
+	// maxLag is how late a frame may still go out. Higher than the direct
+	// stream's: a stall on the uplink (a lost packet waiting for its
+	// retransmit) is over once the backlog flushes, and the player skips
+	// ahead through it. Dropping instead would freeze video until the next
+	// keyframe on top of the stall.
+	maxLag = time.Second
+	// statsEvery: how often the uplink's health is logged
+	statsEvery    = 30 * time.Second
+	tcpCongestion = 13 // TCP_CONGESTION
 )
 
 var dialer = websocket.Dialer{
@@ -40,9 +51,48 @@ var dialer = websocket.Dialer{
 		c, err := (&net.Dialer{}).DialContext(ctx, network, addr)
 		if tc, ok := c.(*net.TCPConn); ok {
 			tc.SetWriteBuffer(sendBuffer)
+			useBBR(tc)
 		}
 		return c, err
 	},
+}
+
+// useBBR switches the socket to BBR congestion control when the kernel has
+// it: CUBIC halves its rate on every lost packet, which on a lossy home
+// uplink means stalls; BBR paces by measured bandwidth instead.
+func useBBR(tc *net.TCPConn) {
+	raw, err := tc.SyscallConn()
+	if err != nil {
+		return
+	}
+	var serr error
+	raw.Control(func(fd uintptr) {
+		serr = syscall.SetsockoptString(int(fd), syscall.IPPROTO_TCP, tcpCongestion, "bbr")
+	})
+	if serr != nil {
+		logger.Infof("relay: BBR unavailable (%v), staying on the default congestion control; `modprobe tcp_bbr` on the host enables it", serr)
+	}
+}
+
+// tcpInfo reads the kernel's view of the connection: round trip and
+// retransmits tell a lossy uplink from a slow one.
+func tcpInfo(c net.Conn) (*syscall.TCPInfo, bool) {
+	tc, ok := c.(*net.TCPConn)
+	if !ok {
+		return nil, false
+	}
+	raw, err := tc.SyscallConn()
+	if err != nil {
+		return nil, false
+	}
+	var info syscall.TCPInfo
+	var errno syscall.Errno
+	raw.Control(func(fd uintptr) {
+		n := uint32(unsafe.Sizeof(info))
+		_, _, errno = syscall.Syscall6(syscall.SYS_GETSOCKOPT, fd, syscall.IPPROTO_TCP, syscall.TCP_INFO,
+			uintptr(unsafe.Pointer(&info)), uintptr(unsafe.Pointer(&n)), 0)
+	})
+	return &info, errno == 0
 }
 
 // Hubs gives the running session's stream (session.Manager), nil when none.
@@ -90,14 +140,22 @@ func publish(sessions Hubs, stop <-chan struct{}, backoff *time.Duration) error 
 			}
 		}
 	}()
+	// the longest a write blocked, a stalled uplink, since the last stats
+	var slowest time.Duration
 	write := func(typ int, b []byte) error {
 		conn.SetWriteDeadline(time.Now().Add(writeWait))
-		return conn.WriteMessage(typ, b)
+		t := time.Now()
+		err := conn.WriteMessage(typ, b)
+		slowest = max(slowest, time.Since(t))
+		return err
 	}
+	var lastRetrans uint32
+	stats := time.NewTicker(statsEvery)
+	defer stats.Stop()
 
 	var sub *stream.Sub
 	var hub *stream.Hub
-	var pacer stream.Pacer
+	pacer := stream.Pacer{Max: maxLag}
 	var bundle []byte
 	audio := 0
 	defer func() {
@@ -158,11 +216,19 @@ func publish(sessions Hubs, stop <-chan struct{}, backoff *time.Duration) error 
 				return err
 			}
 			bundle, audio = bundle[:0], 0
-		case <-ping.C:
-			if pacer.Dropped > 0 {
-				logger.Debugf("relay: dropped %d late frames in 30s, the uplink can't keep up", pacer.Dropped)
-				pacer.Dropped = 0
+		case <-stats.C:
+			if hub == nil {
+				slowest, pacer.Dropped = 0, 0
+				continue
 			}
+			if info, ok := tcpInfo(conn.NetConn()); ok {
+				logger.Infof("relay uplink: rtt %dms ±%d, retransmits %d (+%d), longest write %s, dropped %d late frames",
+					info.Rtt/1000, info.Rttvar/1000, info.Total_retrans, info.Total_retrans-lastRetrans,
+					slowest.Round(time.Millisecond), pacer.Dropped)
+				lastRetrans = info.Total_retrans
+			}
+			slowest, pacer.Dropped = 0, 0
+		case <-ping.C:
 			if err := write(websocket.PingMessage, nil); err != nil {
 				return err
 			}

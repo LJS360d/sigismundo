@@ -13,10 +13,14 @@ interface Env {
 
 const KIND_VIDEO = 1;
 const FLAG_KEY = 1;
-// A viewer this far (µs of stream time) behind the newest frame gets no video
-// until it catches up, then resumes at a keyframe: a slow link costs frames
-// instead of piling up delay that never goes away.
+// A viewer this far (µs of stream time) behind the newest frame for SUSTAIN
+// acks in a row (2s) gets no video until it catches up, then resumes at a
+// keyframe: a link too slow for the stream costs frames instead of piling up
+// delay that never goes away. A single spike is left alone: after a stall the
+// backlog is already on its way, and cutting video would only add a wait for
+// the next keyframe.
 const MAX_LAG = 300_000;
+const SUSTAIN = 8;
 const enc = new TextEncoder();
 
 export default {
@@ -50,8 +54,8 @@ function room(env: Env) {
   return env.ROOM.get(env.ROOM.idFromName(loc ? `main-${loc}` : "main"), loc ? { locationHint: loc } : undefined);
 }
 
-// behind: the last ack put it past MAX_LAG
-type Viewer = { needKey: boolean; paused: boolean; behind: boolean };
+// over: acks in a row past MAX_LAG; behind: video held back for it
+type Viewer = { needKey: boolean; paused: boolean; behind: boolean; over: number };
 
 export class Room extends DurableObject<Env> {
   private pub?: WebSocket;
@@ -60,6 +64,13 @@ export class Room extends DurableObject<Env> {
   private key?: ArrayBuffer;
   // timestamp of the newest frame published
   private newest = 0;
+  // How late the publisher's frames arrive, to tell its uplink's stalls from
+  // the viewers' links: arrival minus timestamp (ms), relative to its minimum
+  // over the last 10-20s. pubPeak is the worst since the last report.
+  private pubMin = [Infinity, Infinity];
+  private pubMinAt = 0;
+  private pubPeak = 0;
+  private pubPeakAt = 0;
 
   async fetch(req: Request): Promise<Response> {
     const path = new URL(req.url).pathname;
@@ -99,7 +110,7 @@ export class Room extends DurableObject<Env> {
       ws.close(1013, "no stream");
       return;
     }
-    const v: Viewer = { needKey: true, paused: false, behind: false };
+    const v: Viewer = { needKey: true, paused: false, behind: false, over: 0 };
     this.viewers.set(ws, v);
     this.sendKey(ws, v);
     ws.addEventListener("message", (ev) => {
@@ -114,10 +125,14 @@ export class Room extends DurableObject<Env> {
         // flowing while it is behind, so acks keep coming and tell when the
         // backlog has drained.
         const lag = Math.max(0, this.newest - m.ts);
-        const behind = lag > MAX_LAG;
-        if (behind && !v.behind) v.needKey = true;
-        v.behind = behind;
-        this.send(ws, JSON.stringify({ t: "lag", ms: Math.round(lag / 1000) }));
+        v.over = lag > MAX_LAG ? v.over + 1 : 0;
+        if (v.over >= SUSTAIN && !v.behind) {
+          v.behind = true;
+          v.needKey = true;
+        } else if (v.over === 0) {
+          v.behind = false;
+        }
+        this.send(ws, JSON.stringify({ t: "lag", ms: Math.round(lag / 1000), pub: this.pubPeak, held: v.behind }));
       }
     });
     const gone = () => this.viewers.delete(ws);
@@ -136,7 +151,10 @@ export class Room extends DurableObject<Env> {
     const key = video && (view.getUint8(last + 5) & FLAG_KEY) !== 0;
     const audio = video ? b.slice(0, last) : b;
     if (key) this.key = b.slice(last);
-    if (last + 14 <= b.byteLength) this.newest = Number(view.getBigUint64(last + 6));
+    if (last + 14 <= b.byteLength) {
+      this.newest = Number(view.getBigUint64(last + 6));
+      this.notePub(this.newest);
+    }
     for (const [ws, v] of this.viewers) {
       if (video && (v.paused || v.behind || (v.needKey && !key))) {
         if (audio.byteLength > 0) this.send(ws, audio);
@@ -145,6 +163,23 @@ export class Room extends DurableObject<Env> {
       if (key) v.needKey = false;
       this.send(ws, b);
     }
+  }
+
+  private notePub(ts: number) {
+    const now = Date.now();
+    const d = now - ts / 1000;
+    if (now - this.pubMinAt > 10_000) {
+      this.pubMin = [this.pubMin[1], Infinity];
+      this.pubMinAt = now;
+    }
+    this.pubMin[1] = Math.min(this.pubMin[1], d);
+    const late = Math.round(d - Math.min(...this.pubMin));
+    // the peak covers the last second
+    if (now - this.pubPeakAt > 1000) {
+      this.pubPeak = 0;
+      this.pubPeakAt = now;
+    }
+    this.pubPeak = Math.max(this.pubPeak, late);
   }
 
   // Deltas are useless without the frames they reference: after the cached
@@ -157,9 +192,11 @@ export class Room extends DurableObject<Env> {
   private reset() {
     this.key = undefined;
     this.newest = 0;
+    this.pubMin = [Infinity, Infinity];
     for (const v of this.viewers.values()) {
       v.needKey = true;
       v.behind = false;
+      v.over = 0;
     }
   }
 

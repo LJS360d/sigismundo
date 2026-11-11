@@ -167,14 +167,16 @@ function Loading({ session }: { session: SessionView }) {
   );
 }
 
-// Where the stream comes from and, through the relay, how far behind the
-// newest frame this viewer is (past 300ms the relay holds video back).
+// Where the stream comes from and, through the relay, where delay builds up:
+// "server late" is the server's uplink, "behind" this viewer's own link.
 function StatsOverlay() {
-  const { source, lag } = stats.value;
+  const { source, lag, pub, held } = stats.value;
   return (
     <div class="pointer-events-none absolute top-2 left-2 rounded bg-black/70 px-2 py-1 font-mono text-xs text-white/90">
       {source}
+      {pub !== undefined && ` · server late ${pub}ms`}
       {lag !== undefined && ` · behind ${lag}ms`}
+      {held && " · video held"}
     </div>
   );
 }
