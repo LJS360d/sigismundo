@@ -1,6 +1,70 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
-    "config:recommended"
+  "extends": ["config:recommended", ":dependencyDashboard", ":semanticCommitsDisabled"],
+  "timezone": "Europe/Rome",
+  "schedule": ["before 9am"],
+  "prConcurrentLimit": 10,
+  "prHourlyLimit": 0,
+  "rangeStrategy": "bump",
+  "postUpdateOptions": ["gomodTidy", "pnpmDedupe"],
+  "vulnerabilityAlerts": {
+    "schedule": ["at any time"],
+    "labels": ["security"]
+  },
+  "packageRules": [
+    {
+      "description": "Match pnpm minimumReleaseAge (pnpm >=11 default: 1440 min); otherwise pnpm rejects the lockfile Renovate wrote",
+      "matchManagers": ["npm"],
+      "minimumReleaseAge": "1 day",
+      "internalChecksFilter": "strict"
+    },
+    {
+      "description": "Batch non-major web updates (activity + relay)",
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "web deps (non-major)"
+    },
+    {
+      "description": "Discord Activity SDK tracks Discord client changes; land it alone and fast",
+      "matchPackageNames": ["@discord/embedded-app-sdk"],
+      "schedule": ["at any time"],
+      "groupName": "discord sdk",
+      "labels": ["discord-api"],
+      "prPriority": 10
+    },
+    {
+      "description": "wrangler and workers-types move together (workers-types publishes near-daily, so weekly is enough)",
+      "matchPackageNames": ["wrangler", "@cloudflare/workers-types"],
+      "groupName": "cloudflare workers",
+      "schedule": ["before 9am on monday"]
+    },
+    {
+      "description": "Batch non-major Go updates",
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "matchDepTypes": ["require", "indirect"],
+      "groupName": "go deps (non-major)"
+    },
+    {
+      "description": "Batch toolchain, base images and actions",
+      "matchManagers": ["mise", "dockerfile", "docker-compose", "github-actions"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "toolchain & images"
+    },
+    {
+      "description": "Go is pinned in server/mise.toml, the go.mod directive and the golang base image; bump them in one PR",
+      "matchPackageNames": ["go", "golang"],
+      "groupName": "go toolchain"
+    },
+    {
+      "description": "Node is pinned in */mise.toml and the activity base image; bump them in one PR",
+      "matchPackageNames": ["node"],
+      "groupName": "node"
+    },
+    {
+      "description": "pnpm is pinned in */mise.toml and package.json packageManager (corepack in the Dockerfile uses that one); bump them in one PR",
+      "matchPackageNames": ["pnpm"],
+      "groupName": "pnpm"
+    }
   ]
 }
