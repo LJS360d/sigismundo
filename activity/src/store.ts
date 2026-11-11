@@ -30,6 +30,10 @@ export let returning = "";
 export const menu = signal(false);
 export const MENU_KEY = "Ctrl+Shift+X";
 export const isMenuKey = (ev: KeyboardEvent) => ev.ctrlKey && ev.shiftKey && ev.code === "KeyX";
+// Discord shrank the Activity to picture in picture: the stream alone, or an
+// attract screen between games. ?pip forces it in a plain browser.
+export const pip = signal(new URLSearchParams(location.search).has("pip"));
+pip.subscribe((v) => v && (menu.value = false));
 
 // Binary frames (video/audio) go to whoever streams them, not through signals.
 export let onMedia: ((buf: ArrayBuffer) => void) | undefined;

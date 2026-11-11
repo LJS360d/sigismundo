@@ -2,8 +2,9 @@ import "./style.css";
 import { render } from "preact";
 import { signal } from "@preact/signals";
 import { authenticate, getJSON } from "./auth";
-import { catalog, connect, state, toast, type Entry } from "./store";
+import { catalog, connect, pip, state, toast, type Entry } from "./store";
 import { Announcement } from "./components/Control";
+import { Attract } from "./components/Attract";
 import { Catalog } from "./components/Catalog";
 import { Stage } from "./components/Stage";
 import { Splash } from "./components/Splash";
@@ -29,9 +30,13 @@ function App() {
     );
   return (
     <div class="h-full">
-      {s.session ? <Stage key={s.session.id} session={s.session} /> : <Catalog />}
-      <Announcement />
-      {toast.value && <div class="fixed bottom-4 left-1/2 -translate-x-1/2 rounded-lg border border-line bg-panel px-4 py-2">{toast.value}</div>}
+      {s.session ? <Stage key={s.session.id} session={s.session} /> : pip.value ? <Attract /> : <Catalog />}
+      {!pip.value && <Announcement />}
+      {toast.value && (
+        <div class={`fixed left-1/2 -translate-x-1/2 rounded-lg border border-line bg-panel whitespace-nowrap ${pip.value ? "bottom-2 px-2 py-1 text-xs" : "bottom-4 px-4 py-2"}`}>
+          {toast.value}
+        </div>
+      )}
     </div>
   );
 }

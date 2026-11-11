@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "preact/hooks";
 import { useSignal } from "@preact/signals";
 import { Player } from "../player";
-import { canLaunch, catalog, controlling, isMenuKey, isStatsKey, MENU_KEY, menu, send, setMedia, showStats, stats, type SessionView } from "../store";
+import { canLaunch, catalog, controlling, isMenuKey, isStatsKey, MENU_KEY, menu, pip, send, setMedia, showStats, stats, type SessionView } from "../store";
 import { vtName } from "./Catalog";
 import { ControllerBadge } from "./Control";
 
@@ -122,9 +122,9 @@ export function Stage({ session }: { session: SessionView }) {
       {!session.running ? (
         <Loading session={session} />
       ) : (
-        audioBlocked.value && <div class="pointer-events-none absolute inset-x-0 bottom-4 mx-auto w-fit rounded-lg bg-black/70 px-5 py-3">Click for sound</div>
+        audioBlocked.value && !pip.value && <div class="pointer-events-none absolute inset-x-0 bottom-4 mx-auto w-fit rounded-lg bg-black/70 px-5 py-3">Click for sound</div>
       )}
-      <ControllerBadge awayOnly />
+      {!pip.value && <ControllerBadge awayOnly />}
       {showStats.value && <StatsOverlay />}
       {menu.value && (
         <div class="absolute inset-0 grid place-items-center bg-black/55 p-4 backdrop-blur-sm" onClick={(e) => e.target === e.currentTarget && (menu.value = false)}>
@@ -153,15 +153,17 @@ function Loading({ session }: { session: SessionView }) {
     <div class="absolute inset-0 grid place-items-center overflow-hidden bg-bg">
       {image && <img class="absolute inset-0 size-full animate-pan object-cover opacity-40 blur-xl" src={image} alt="" />}
       <div class="absolute inset-0 bg-linear-to-t from-bg via-bg/40 to-transparent" />
-      <div class="relative flex w-full max-w-md flex-col items-center gap-4 px-6 text-center">
-        <h1 class="animate-rise text-3xl font-bold tracking-tight drop-shadow-lg">{session.name}</h1>
+      <div class={`relative flex w-full max-w-md flex-col items-center text-center ${pip.value ? "gap-2 px-4" : "gap-4 px-6"}`}>
+        <h1 class={`animate-rise font-bold tracking-tight drop-shadow-lg ${pip.value ? "text-2xl" : "text-3xl"}`}>{session.name}</h1>
         <div class="h-1 w-full overflow-hidden rounded-full bg-white/10">
           <div class="h-full w-2/5 animate-shimmer rounded-full bg-linear-to-r from-transparent via-accent to-transparent" />
         </div>
         <p class="text-sm text-muted">{session.status || "Starting…"}</p>
-        <p class="mt-6 text-xs text-muted/80">
-          Press <kbd>{MENU_KEY}</kbd> in game for the menu.
-        </p>
+        {!pip.value && (
+          <p class="mt-6 text-xs text-muted/80">
+            Press <kbd>{MENU_KEY}</kbd> in game for the menu.
+          </p>
+        )}
       </div>
     </div>
   );

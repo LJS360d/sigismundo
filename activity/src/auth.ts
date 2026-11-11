@@ -1,4 +1,5 @@
-import { DiscordSDK } from "@discord/embedded-app-sdk";
+import { DiscordSDK, Events } from "@discord/embedded-app-sdk";
+import { pip } from "./store";
 
 // Returns the server token for /api/ws. Discord loads Activities with frame_id
 // in the query; anything else is a plain browser, which only works with the
@@ -27,6 +28,10 @@ export async function authenticate(): Promise<string> {
   if (!res.ok) throw new Error(`token exchange failed: ${await res.text()}`);
   const { access_token, token } = await res.json();
   await sdk.commands.authenticate({ access_token });
+  // layout_mode 1 is PIP, 2 grid (a call tile): both small; 0 focused
+  sdk
+    .subscribe(Events.ACTIVITY_LAYOUT_MODE_UPDATE, ({ layout_mode }) => (pip.value = layout_mode === 1 || layout_mode === 2))
+    .catch((e) => console.warn("layout mode unavailable", e));
   return token;
 }
 

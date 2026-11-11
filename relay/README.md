@@ -34,6 +34,15 @@ curl -i https://sigismundo-relay.<your-subdomain>.workers.dev
 
 To change the secret later, run `pnpm wrangler secret put RELAY_SECRET` again and update the server to match. To update the code, `pnpm run deploy`.
 
+To serve it from your own domain (a zone on the same Cloudflare account) instead of `workers.dev`, set `RELAY_DOMAIN` when deploying, and use that host in place of the `workers.dev` one below. `pnpm run deploy` passes it to wrangler as `--domain`. With mise, keep it in `relay/mise.local.toml`, which git ignores:
+
+```toml
+[env]
+RELAY_DOMAIN = "relay.example.com"
+```
+
+Without mise: `RELAY_DOMAIN=relay.example.com pnpm run deploy`.
+
 ## 2. Configure the server
 
 Add to the server's env file (`.env` next to `docker-compose.prod.yml`, or `server/.env` with `docker-compose.yml`):
