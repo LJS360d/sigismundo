@@ -10,13 +10,13 @@
     "@discord/embedded-app-sdk": "^2.5.0",
     "@preact/signals": "^2.11.4",
     "opus-decoder": "^0.7.12",
-    "preact": "^11.0.2"
+    "preact": "^11.2.0"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.3.3",
-    "tailwindcss": "^4.3.3",
+    "@tailwindcss/vite": "^4.3.5",
+    "tailwindcss": "^4.3.5",
     "typescript": "^6.0.3",
-    "vite": "^8.3.5"
+    "vite": "^8.3.8"
   },
   "packageManager": "pnpm@12.14.0"
 }
