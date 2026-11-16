@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1
 FROM node:26.13.1-alpine AS build
-RUN corepack enable
 WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
+RUN npm install -g "$(node -p 'require("./package.json").packageManager')"
 RUN --mount=type=cache,target=/pnpm/store pnpm install --frozen-lockfile --store-dir /pnpm/store
 COPY . .
 RUN pnpm run build
