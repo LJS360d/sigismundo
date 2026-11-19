@@ -47,6 +47,10 @@ var (
 	// uplink carries one copy however many watch; empty streams directly.
 	RelayURL    string
 	RelaySecret []byte
+	// RelayFallback: while the relay is down, viewers get the stream from the
+	// server itself. Off by default: the relay mostly drops because the uplink
+	// is choked, and a copy per viewer on top of that only deepens the lag.
+	RelayFallback bool
 )
 
 func init() {
@@ -99,6 +103,7 @@ func init() {
 	VideoEncoder = envOr("VIDEO_ENCODER", "auto")
 	RelayURL = strings.TrimSuffix(os.Getenv("RELAY_URL"), "/")
 	RelaySecret = []byte(os.Getenv("RELAY_SECRET"))
+	RelayFallback = envBool("RELAY_FALLBACK", false)
 	if RelayURL != "" && len(RelaySecret) == 0 {
 		log.Println("RELAY_URL set without RELAY_SECRET, streaming directly")
 		RelayURL = ""

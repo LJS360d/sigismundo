@@ -14,6 +14,8 @@ export type State = {
   owner: boolean;
   // token for the relay, when the server publishes to one
   relay?: string;
+  // the server is publishing to the relay right now
+  relayUp: boolean;
 };
 
 export const catalog = signal<Entry[]>([]);
@@ -59,6 +61,7 @@ let relayLive = false;
 const RELAY_RETRY = 2_000;
 const RELAY_RETRY_MAX = 30_000;
 let relayRetry = RELAY_RETRY;
+let relayTimer = 0;
 // The last audio timestamp (µs) from the relay, acked every ACK_EVERY ms: the
 // relay holds video back from a viewer that falls behind. Audio, as it is
 // never replayed from a cache and keeps flowing while video is held back.
@@ -71,6 +74,16 @@ let newest = -1;
 // video back, this viewer having been behind for a while
 export type Stats = { source: "relay" | "direct"; lag?: number; pub?: number; held?: boolean };
 export const stats = signal<Stats>({ source: "direct" });
+
+// What's wrong with the stream, if anything, and on whose side: shown to
+// everyone, so nobody blames their own connection for the host's.
+const SLOW = 500;
+export function streamIssue() {
+  const { pub, held } = stats.value;
+  if (state.value?.relay && !state.value.relayUp) return "Host connection lost, reconnecting…";
+  if (pub !== undefined && pub > SLOW) return "Host connection is slow";
+  if (held) return "Your connection is slow";
+}
 export const showStats = signal(false);
 export const STATS_KEY = "Ctrl+Shift+L";
 export const isStatsKey = (ev: KeyboardEvent) => ev.ctrlKey && ev.shiftKey && ev.code === "KeyL";
@@ -106,7 +119,7 @@ function openRelay() {
       stats.value = { source: "direct" };
       send({ t: "relay", d: false });
     }
-    setTimeout(openRelay, relayRetry);
+    relayTimer = setTimeout(openRelay, relayRetry);
     relayRetry = Math.min(relayRetry * 2, RELAY_RETRY_MAX);
   };
 }
@@ -168,7 +181,12 @@ export function connect(token: string) {
     if (msg.t === "state") {
       if (msg.relay) {
         relayToken = msg.relay;
-        openRelay();
+        // the server just reached the relay: no point waiting out the backoff
+        if (msg.relayUp && !relay) {
+          clearTimeout(relayTimer);
+          relayRetry = RELAY_RETRY;
+          openRelay();
+        }
       }
       announceControl(state.value, msg);
       const prev = state.value?.session;

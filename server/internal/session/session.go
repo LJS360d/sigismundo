@@ -55,6 +55,7 @@ type Manager struct {
 	controller User
 	awaySince  time.Time
 	lastSeen   time.Time
+	relayUp    bool
 }
 
 func NewManager(cat *catalog.Catalog) *Manager {
@@ -235,6 +236,19 @@ func (m *Manager) Detach(v *Viewer) {
 	m.broadcast()
 }
 
+// SetRelayUp records whether the server is publishing to the relay, so
+// viewers reconnect to it as soon as it is back and can tell the host's link
+// is down meanwhile.
+func (m *Manager) SetRelayUp(up bool) {
+	m.mu.Lock()
+	changed := m.relayUp != up
+	m.relayUp = up
+	m.mu.Unlock()
+	if changed {
+		m.broadcast()
+	}
+}
+
 // Run enforces the idle timeout and the controller grace period until stop closes.
 func (m *Manager) Run(stop <-chan struct{}) {
 	t := time.NewTicker(time.Second)
@@ -314,6 +328,8 @@ type View struct {
 	Controller *User        `json:"controller"`
 	// Away is set while the controller has left and control is about to pass on.
 	Away *Away `json:"away"`
+	// RelayUp: the server is publishing to the relay (meaningless without one).
+	RelayUp bool `json:"relayUp"`
 }
 
 // Away times the handover, in milliseconds: In left out of Grace.
@@ -333,7 +349,7 @@ type SessionView struct {
 func (m *Manager) View() View {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var v View
+	v := View{RelayUp: m.relayUp}
 	if m.controller.ID != "" {
 		c := m.controller
 		v.Controller = &c

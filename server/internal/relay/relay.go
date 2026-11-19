@@ -115,11 +115,17 @@ func load() string {
 	return f[0]
 }
 
-// Hubs gives the running session's stream (session.Manager), nil when none.
-type Hubs interface{ Hub() *stream.Hub }
+// Hubs gives the running session's stream (session.Manager), nil when none,
+// and hears whether the relay is being published to.
+type Hubs interface {
+	Hub() *stream.Hub
+	SetRelayUp(bool)
+}
 
 // Run keeps publishing to config.RelayURL until stop closes. While it can't,
-// viewers fall back to the stream of /api/ws.
+// viewers get no stream, or the one of /api/ws with RELAY_FALLBACK. Retries
+// back off to only 10s: without the relay there is no stream, and an uplink
+// that recovers should have it back quickly.
 func Run(sessions Hubs, stop <-chan struct{}) {
 	backoff := time.Second
 	for {
@@ -135,7 +141,7 @@ func Run(sessions Hubs, stop <-chan struct{}) {
 			return
 		case <-time.After(backoff):
 		}
-		backoff = min(backoff*2, time.Minute)
+		backoff = min(backoff*2, 10*time.Second)
 	}
 }
 
@@ -150,6 +156,8 @@ func publish(sessions Hubs, stop <-chan struct{}, backoff *time.Duration) error 
 	defer conn.Close()
 	*backoff = time.Second
 	logger.Infof("relay: publishing to %s", config.RelayURL)
+	sessions.SetRelayUp(true)
+	defer sessions.SetRelayUp(false)
 
 	// Reading handles pings and notices the close.
 	dead := make(chan struct{})

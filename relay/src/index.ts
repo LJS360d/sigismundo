@@ -21,6 +21,10 @@ const FLAG_KEY = 1;
 // the next keyframe.
 const MAX_LAG = 300_000;
 const SUSTAIN = 8;
+// A publisher silent this long (ms) is late too: a stalled uplink sends no
+// frames whose lateness could be measured. Bundles normally come every
+// 100ms at most (audio alone).
+const STALL = 250;
 const enc = new TextEncoder();
 
 export default {
@@ -71,6 +75,8 @@ export class Room extends DurableObject<Env> {
   private pubMinAt = 0;
   private pubPeak = 0;
   private pubPeakAt = 0;
+  // when the publisher's last bundle arrived
+  private lastPub = 0;
 
   async fetch(req: Request): Promise<Response> {
     const path = new URL(req.url).pathname;
@@ -132,7 +138,9 @@ export class Room extends DurableObject<Env> {
         } else if (v.over === 0) {
           v.behind = false;
         }
-        this.send(ws, JSON.stringify({ t: "lag", ms: Math.round(lag / 1000), pub: this.pubPeak, held: v.behind }));
+        const silent = Date.now() - this.lastPub;
+        const pub = Math.max(this.pubPeak, silent > STALL ? silent : 0);
+        this.send(ws, JSON.stringify({ t: "lag", ms: Math.round(lag / 1000), pub, held: v.behind }));
       }
     });
     const gone = () => this.viewers.delete(ws);
@@ -143,6 +151,7 @@ export class Room extends DurableObject<Env> {
   // A bundle holds audio packets, then at most one video frame, last. A viewer
   // waiting for a keyframe (or paused) gets the audio part alone.
   private fanOut(b: ArrayBuffer) {
+    this.lastPub = Date.now();
     const view = new DataView(b);
     let last = -1;
     for (let off = 0; off + 4 <= b.byteLength; off += 4 + view.getUint32(off)) last = off;
@@ -192,6 +201,7 @@ export class Room extends DurableObject<Env> {
   private reset() {
     this.key = undefined;
     this.newest = 0;
+    this.lastPub = Date.now();
     this.pubMin = [Infinity, Infinity];
     for (const v of this.viewers.values()) {
       v.needKey = true;

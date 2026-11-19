@@ -98,7 +98,7 @@ nginx in the activity container proxies `/api` and the WebSocket to the server w
 Every viewer gets its own copy of the stream, so the server's upload is the bitrate times the viewers. The relay (`relay/`, a Cloudflare Worker with a Durable Object) moves the fan-out to Cloudflare: the server publishes one copy (`server/internal/relay`), each viewer reads it from the Worker, and input and state still go straight to the server.
 
 - **Costs nothing:** it fits the Workers Free plan, which has no billing at all. Its daily cap of 100,000 requests counts incoming WebSocket messages at 20 to 1, so the server bundles audio with each video frame: one message per frame, about 23 hours of streaming a day at 24 fps (18 at 30). Outgoing messages, the fan-out, are free.
-- **Fails safe:** when the relay is down, out of its daily quota (until 00:00 UTC) or not mapped, viewers fall back to the server's own stream and retry the relay every 30 seconds.
+- **Required once set up:** when the relay is down, out of its daily quota (until 00:00 UTC) or not mapped, the stream pauses with a notice until it is back, rather than falling back to a copy per viewer on an upload that is likely already full. `RELAY_FALLBACK=true` brings the fallback back.
 - **Setup:** deploy the Worker, set `RELAY_URL`/`RELAY_SECRET` on the server and add a `/relay` URL mapping, step by step in [relay/README.md](relay/README.md).
 - **Limits:** the Worker can't see how far behind each viewer is, so per-viewer frame dropping happens only on the server's side; a viewer whose own connection is too slow falls behind until its decoder skips ahead. Viewers' token checks use `RELAY_SECRET`, never `SESSION_SECRET`.
 

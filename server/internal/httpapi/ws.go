@@ -198,10 +198,11 @@ func (c *wsClient) writeLoop() {
 		b, _ := json.Marshal(v)
 		return write(websocket.TextMessage, b)
 	}
-	// resubscribe follows the session's hub, unless the relay streams instead.
+	// resubscribe follows the session's hub, unless the relay streams instead:
+	// with one configured, it is the only source unless RELAY_FALLBACK is set.
 	resubscribe := func() {
 		h := c.srv.sessions.Hub()
-		if c.relayed.Load() {
+		if c.relayed.Load() || (config.RelayURL != "" && !config.RelayFallback) {
 			h = nil
 		}
 		if h != hub {

@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "preact/hooks";
 import { useSignal } from "@preact/signals";
 import { Player } from "../player";
-import { canLaunch, catalog, controlling, isMenuKey, isStatsKey, MENU_KEY, menu, pip, send, setMedia, showStats, stats, type SessionView } from "../store";
+import { canLaunch, catalog, controlling, isMenuKey, isStatsKey, MENU_KEY, menu, pip, send, setMedia, showStats, stats, streamIssue, type SessionView } from "../store";
 import { vtName } from "./Catalog";
 import { ControllerBadge } from "./Control";
 
@@ -126,6 +126,7 @@ export function Stage({ session }: { session: SessionView }) {
       )}
       {!pip.value && <ControllerBadge awayOnly />}
       {showStats.value && <StatsOverlay />}
+      {session.running && <StreamIssue />}
       {menu.value && (
         <div class="absolute inset-0 grid place-items-center bg-black/55 p-4 backdrop-blur-sm" onClick={(e) => e.target === e.currentTarget && (menu.value = false)}>
           <div class="w-full max-w-90 rounded-xl border border-line bg-panel p-5 shadow-2xl" role="dialog" aria-label="Game menu">
@@ -165,6 +166,16 @@ function Loading({ session }: { session: SessionView }) {
           </p>
         )}
       </div>
+    </div>
+  );
+}
+
+function StreamIssue() {
+  const issue = streamIssue();
+  if (!issue) return null;
+  return (
+    <div class={`pointer-events-none absolute inset-x-0 mx-auto w-fit rounded-lg bg-black/70 text-amber-300 ${pip.value ? "top-2 px-2 py-1 text-xs" : "top-4 px-4 py-2"}`}>
+      ⚠ {issue}
     </div>
   );
 }

@@ -6,7 +6,7 @@ A Cloudflare Worker that fans the game stream out to the Activity's viewers. Wit
                          one copy                    one copy per viewer
 game server ── wss /publish ──► Worker + Durable Object ──► /relay/view ──► Activity viewers
      ▲                                                                        │
-     └──────────────── /api/ws: input, state (and the stream, as fallback) ───┘
+     └──────── /api/ws: input, state (and the stream, with RELAY_FALLBACK) ───┘
 ```
 
 It runs on the **Workers Free plan**, which has no billing: nothing is ever charged. See [Limits](#limits) for what that plan allows.
@@ -79,13 +79,15 @@ Targets are hosts without `https://`. Discord matches the most specific prefix, 
 
 Open the Activity with a game running. In the browser devtools of the Activity (Discord desktop: Ctrl+Shift+I, if enabled), the Network tab shows a WebSocket to `/relay/view` receiving binary messages. On the server, the upload stays about the same as more viewers join.
 
-Viewers fall back to the server's own stream, and retry the relay every 30 seconds, whenever the relay:
+With a relay configured, it is the only source of the stream. Whenever it:
 
 - isn't mapped or deployed,
 - has no publisher (the server is down or can't reach it),
-- is over the free plan's daily limit.
+- is over the free plan's daily limit,
 
-So a broken relay costs upload, never the stream.
+viewers get no stream, retry the relay (backing off to every 30 seconds) and reconnect at once when the server reaches it again. Meanwhile the Activity shows "Host connection lost, reconnecting…", and "Host connection is slow" whenever the server's frames reach the relay late.
+
+The relay mostly drops because the server's upload is full, and falling back to a copy per viewer would only fill it further: a short freeze would turn into lasting lag. To have viewers fall back to the server's own stream anyway, set `RELAY_FALLBACK=true` on the server.
 
 ## Limits
 
