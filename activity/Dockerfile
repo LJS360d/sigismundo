@@ -7,7 +7,7 @@ RUN --mount=type=cache,target=/pnpm/store pnpm install --frozen-lockfile --store
 COPY . .
 RUN pnpm run build
 
-FROM nginx:alpine
+FROM nginx:1.31.9-alpine
 ENV API_URL=http://sigismundo:8080
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
